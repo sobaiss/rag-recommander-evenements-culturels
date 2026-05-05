@@ -1,16 +1,65 @@
 # app.py
 import datetime
 import logging
+import os
+import urllib.parse
 
 import streamlit as st
 from mistralai.client import Mistral
 from streamlit_feedback import streamlit_feedback  # Importez le composant
 
 # Importer nos modules locaux
-from utils.config import APP_TITLE, COMPANY_NAME, MISTRAL_API_KEY
+from utils.config import (
+    APP_TITLE,
+    AVAILABLE_EMBEDDING_MODELS,
+    CHUNK_OVERLAP,
+    CHUNK_SIZE,
+    COMPANY_NAME,
+    DOCUMENT_CHUNKS_FILE,
+    EMBEDDING_MODEL,
+    FAISS_INDEX_FILE,
+    INDEX_METADATA_FILE,
+    MISTRAL_API_KEY,
+    FRENCH_CITIES,
+)
 from utils.database import log_interaction, update_feedback  # Importez update_feedback
+from utils.load_data import load_documents_from_url_paginated, save_documents_to_json
 from utils.query_classifier import QueryClassifier
 from utils.vector_store import VectorStoreManager
+
+class StreamlitLogHandler(logging.Handler):
+    """Capture les messages logging Python pour les afficher dans Streamlit."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[str] = []
+        self.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(self.format(record))
+
+
+def build_openagenda_url(cities: list[str], begin_date, rows: int = 40, start: int = 0) -> str:
+    """Construit l'URL OpenAgenda avec les filtres ville et date."""
+    params = [
+        ("rows", rows),
+        ("disjunctive.keywords_fr", "true"),
+        ("disjunctive.location_region", "true"),
+        ("disjunctive.location_countrycode", "true"),
+        ("disjunctive.location_department", "true"),
+        ("disjunctive.location_city", "true"),
+        ("start", start),
+        ("dataset", "evenements-publics-openagenda"),
+        ("timezone", "Europe/Berlin"),
+        ("lang", "fr"),
+    ]
+    for city in cities:
+        params.append(("refine.location_city", city))
+    if begin_date:
+        params.append(("refine.firstdate_begin", begin_date.strftime("%Y/%m")))
+    return "https://public.opendatasoft.com/api/records/1.0/search/?" + urllib.parse.urlencode(params)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -55,6 +104,9 @@ if "messages" not in st.session_state:
 # Initialise l'ID de la dernière interaction pour le feedback
 if "last_interaction_id" not in st.session_state:
     st.session_state.last_interaction_id = None
+# Contrôle l'affichage du formulaire de réindexation
+if "show_reindex_form" not in st.session_state:
+    st.session_state.show_reindex_form = False
 
 # --- Interface Utilisateur ---
 
@@ -84,7 +136,7 @@ with st.sidebar:
         "Modèle LLM",
         options=list(model_options.keys()),
         format_func=lambda x: model_options[x],
-        index=0,  # Small par défaut
+        index=1,  # Large par défaut
     )
 
     # Slider pour le nombre de documents
@@ -141,6 +193,191 @@ with st.sidebar:
             mime="text/plain",
             use_container_width=True,
         )
+
+    st.divider()
+
+    # --- Section réindexation ---
+    st.subheader("🗄️ Index vectoriel")
+    current_meta = vector_store.get_metadata()
+    if current_meta:
+        st.caption(f"Modèle : `{current_meta.get('embedding_model', 'N/A')}`")
+        st.caption(f"Chunks : {current_meta.get('num_chunks', 0)} · Docs : {current_meta.get('num_documents', 0)}")
+        created = current_meta.get("created_at", "")[:10]
+        if created:
+            st.caption(f"Créé le : {created}")
+    else:
+        st.caption("Aucun index chargé.")
+
+    reindex_label = "🔼 Masquer la réindexation" if st.session_state.show_reindex_form else "🔄 Réindexer la base"
+    if st.button(reindex_label, use_container_width=True):
+        st.session_state.show_reindex_form = not st.session_state.show_reindex_form
+        st.rerun()
+
+# --- Formulaire de réindexation (zone principale) ---
+if st.session_state.show_reindex_form:
+    st.header("🗄️ Réindexation de la base de connaissances")
+    st.caption("Configurez les paramètres puis lancez la réindexation depuis l'API OpenAgenda.")
+
+    current_meta = vector_store.get_metadata()
+    default_model = (current_meta or {}).get("embedding_model", EMBEDDING_MODEL)
+    default_chunk_size = (current_meta or {}).get("chunk_size", CHUNK_SIZE)
+    default_chunk_overlap = (current_meta or {}).get("chunk_overlap", CHUNK_OVERLAP)
+
+    model_keys = list(AVAILABLE_EMBEDDING_MODELS.keys())
+    default_model_idx = model_keys.index(default_model) if default_model in model_keys else 0
+
+    with st.form("reindex_form"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            embedding_model = st.selectbox(
+                "Modèle d'embedding *",
+                options=model_keys,
+                format_func=lambda x: AVAILABLE_EMBEDDING_MODELS[x],
+                index=default_model_idx,
+                help="mistral-embed utilise l'API Mistral. Les autres modèles sont locaux (nécessitent sentence-transformers).",
+            )
+            chunk_size = st.number_input(
+                "Taille des chunks (caractères) *",
+                min_value=100,
+                max_value=10000,
+                value=int(default_chunk_size),
+                step=100,
+                help="Nombre de caractères par chunk. Valeur recommandée : 2000.",
+            )
+            chunk_overlap = st.number_input(
+                "Chevauchement des chunks (caractères) *",
+                min_value=0,
+                max_value=2000,
+                value=int(default_chunk_overlap),
+                step=50,
+                help="Doit être strictement inférieur à la taille des chunks.",
+            )
+
+        with col2:
+            _one_year_ago = datetime.date.today() - datetime.timedelta(days=365)
+            begin_date = st.date_input(
+                "Date de début des événements",
+                value=_one_year_ago,
+                min_value=_one_year_ago,
+                help="Filtre les événements à partir de ce mois. La date minimale est aujourd'hui − 1 an.",
+            )
+            locations = st.multiselect(
+                "Villes",
+                options=FRENCH_CITIES,
+                default=["Paris"],
+                help="Sélectionnez une ou plusieurs villes. Laissez vide pour toute la France.",
+            )
+            max_records = st.slider(
+                "Nombre maximum de documents",
+                min_value=10,
+                max_value=100000,
+                value=1000,
+                step=100,
+                help="Limite le nombre d'événements récupérés depuis l'API.",
+            )
+
+        submitted = st.form_submit_button("🚀 Lancer la réindexation", use_container_width=True, type="primary")
+
+    if submitted:
+        # --- Validation ---
+        errors = []
+        if chunk_size <= 0:
+            errors.append("La taille des chunks doit être un entier positif.")
+        if chunk_overlap < 0:
+            errors.append("Le chevauchement ne peut pas être négatif.")
+        if chunk_overlap >= chunk_size:
+            errors.append("Le chevauchement doit être strictement inférieur à la taille des chunks.")
+        if not begin_date and not locations:
+            errors.append("Veuillez sélectionner au moins une région ou une date de début.")
+
+        if errors:
+            for err in errors:
+                st.error(err)
+        else:
+            _log_handler = StreamlitLogHandler()
+            logging.getLogger().addHandler(_log_handler)
+
+            with st.status("Réindexation en cours...", expanded=True) as reindex_status:
+                try:
+                    # 1. Construction de l'URL
+                    st.write("🔗 **Étape 1/5** — Construction de l'URL OpenAgenda...")
+                    url = build_openagenda_url(locations, begin_date)
+                    st.code(url, language=None)
+
+                    # 2. Récupération des données
+                    st.write("📥 **Étape 2/5** — Récupération des données (avec pagination)...")
+                    documents = load_documents_from_url_paginated(url, max_records=max_records)
+                    if not documents:
+                        reindex_status.update(label="❌ Aucun événement trouvé", state="error")
+                        st.error("Aucun événement ne correspond aux critères sélectionnés. Essayez d'autres filtres.")
+                        logging.getLogger().removeHandler(_log_handler)
+                        st.stop()
+                    st.write(f"✅ **{len(documents)} événements** récupérés depuis l'API.")
+
+                    # 3. Sauvegarde dans data/
+                    st.write("💾 **Étape 3/5** — Sauvegarde des données dans `data/`...")
+                    save_path = save_documents_to_json(documents)
+                    st.write(f"✅ Fichier sauvegardé : `{save_path}`")
+
+                    # 4. Suppression de l'ancien index
+                    st.write("🗑️ **Étape 4/5** — Suppression de l'ancien index FAISS...")
+                    for path in [FAISS_INDEX_FILE, DOCUMENT_CHUNKS_FILE, INDEX_METADATA_FILE]:
+                        if os.path.exists(path):
+                            os.remove(path)
+                            st.write(f"   Supprimé : `{path}`")
+                    st.write("✅ Ancien index supprimé.")
+
+                    # 5. Construction du nouvel index
+                    st.write(f"🔨 **Étape 5/5** — Construction de l'index avec `{embedding_model}`...")
+                    if not embedding_model.startswith("mistral"):
+                        st.write(
+                            "📦 Chargement du modèle HuggingFace "
+                            "(première utilisation = téléchargement, cela peut prendre quelques minutes)..."
+                        )
+
+                    new_store = VectorStoreManager(
+                        embedding_model=embedding_model,
+                        chunk_size=int(chunk_size),
+                        chunk_overlap=int(chunk_overlap),
+                    )
+
+                    def _progress(msg: str) -> None:
+                        st.write(f"   → {msg}")
+
+                    new_store.build_index(documents, progress_callback=_progress)
+
+                    # Rechargement du cache Streamlit
+                    get_vector_store.clear()
+
+                    # Résultats
+                    final_meta = new_store.get_metadata()
+                    reindex_status.update(label="✅ Réindexation terminée avec succès !", state="complete")
+
+                    st.success(
+                        f"**Réindexation réussie !**\n\n"
+                        f"- Modèle d'embedding : `{final_meta.get('embedding_model')}`\n"
+                        f"- Documents récupérés : **{final_meta.get('num_documents', 0)}**\n"
+                        f"- Chunks créés : **{final_meta.get('num_chunks', 0)}**\n"
+                        f"- Taille des chunks : {final_meta.get('chunk_size')} caractères\n"
+                        f"- Chevauchement : {final_meta.get('chunk_overlap')} caractères\n"
+                        f"- Créé le : {(final_meta.get('created_at') or '')[:19]}"
+                    )
+                    st.info("💡 Rechargez la page (F5) pour utiliser le nouvel index dans le chat.")
+                    st.session_state.show_reindex_form = False
+
+                except Exception as exc:
+                    reindex_status.update(label="❌ Erreur lors de la réindexation", state="error")
+                    st.error(f"Erreur : {exc}")
+                    logging.error("Erreur réindexation", exc_info=True)
+
+                finally:
+                    logging.getLogger().removeHandler(_log_handler)
+                    if _log_handler.records:
+                        with st.expander("📋 Logs détaillés", expanded=False):
+                            st.code("\n".join(_log_handler.records), language="text")
+
+    st.divider()
 
 # Titre principal
 st.title(f"📚 {APP_TITLE}")
@@ -237,16 +474,20 @@ if prompt := st.chat_input("Posez votre question ici..."):
                 ]
 
                 # Prompt système pour le mode RAG
-                system_prompt = f"""Vous êtes un assistant virtuel pour {COMPANY_NAME}.
-Répondez à la question de l'utilisateur en vous basant UNIQUEMENT sur le CONTEXTE DES DOCUMENTS ci-dessous.
-Si l'information n'est pas dans le contexte, dites que vous ne savez pas ou que l'information n'est pas disponible dans les documents fournis.
-Soyez concis et précis. Citez vos sources si possible (par exemple, en mentionnant le nom du fichier ou la catégorie trouvée dans les métadonnées).
+                system_prompt = f"""Vous êtes un assistant virtuel pour {COMPANY_NAME}, spécialisé dans la recommandation d'événements culturels.
 
-CONTEXTE TEMPOREL :
-- Date d'aujourd'hui : {current_date}
-- Mois actuel : {current_month}
+## DATE ACTUELLE (priorité absolue)
+- Aujourd'hui : **{current_date}**
+- Mois en cours : **{current_month}**
 
-CONTEXTE DES DOCUMENTS:
+⚠️ RÈGLE TEMPORELLE CRITIQUE : Les événements dans les documents ci-dessous ont leurs PROPRES dates (passées ou futures). Ne confondez jamais la date actuelle avec les dates des événements. Lorsque l'utilisateur dit "ce mois", "maintenant", "à venir", cela fait référence à **{current_month}** — pas aux dates présentes dans les documents. Mentionnez toujours la date réelle de chaque événement telle qu'elle figure dans le document. Si un événement est passé par rapport à aujourd'hui ({current_date}), signalez-le clairement.
+
+## Instructions
+- Répondez UNIQUEMENT à partir du CONTEXTE DES DOCUMENTS ci-dessous.
+- Si l'information demandée n'est pas dans les documents, dites-le explicitement.
+- Pour chaque événement recommandé, indiquez sa date exacte issue du document.
+
+## Contexte des documents
 ---
 {context_str}
 ---
@@ -261,26 +502,27 @@ CONTEXTE DES DOCUMENTS:
                 system_prompt = f"""Vous êtes l'assistant intelligent de {COMPANY_NAME}, une société spécialisée dans la recommandation et la découverte d'événements publics.
 Votre rôle est d'aider les utilisateurs à trouver l'événement idéal en fonction de leurs envies, de leur localisation et de leur budget.
 
+## DATE ACTUELLE
+- Aujourd'hui : **{current_date}**
+- Mois en cours : **{current_month}**
+
 ### Vos Instructions :
-1. ANALYSE DE LA REQUÊTE : Identifie l'intention de l'utilisateur (thématique, ville, période, gratuité). 
-2. ANALYSE DE LA DATE: Si l'utilisateur utilise des termes comme "ce mois", "à venir" ou "dernier", réfère-toi au CONTEXTE TEMPOREL pour interpréter la période correcte par rapport aux dates présentes dans le CONTEXTE DES DOCUMENTS.
-3. SÉLECTION DES ÉVÉNEMENTS : Utilise les documents fournis pour proposer les options les plus pertinentes.
+1. ANALYSE DE LA REQUÊTE : Identifie l'intention de l'utilisateur (thématique, ville, période, gratuité).
+2. ANALYSE DE LA DATE : Si l'utilisateur utilise des termes comme "ce mois", "à venir" ou "dernier", réfère-toi à la DATE ACTUELLE ci-dessus ({current_month}) pour interpréter la période correcte.
+3. AUCUN RÉSULTAT : La recherche dans la base de connaissances n'a retourné aucun document pertinent. Informe l'utilisateur qu'aucun événement correspondant n'a été trouvé dans la base indexée, et invite-le à reformuler ou à essayer une réindexation avec d'autres filtres.
 4. STRUCTURE DE LA RÉPONSE : Pour chaque événement recommandé, utilise toujours ce format clair :
-   - 📅 **[Nom de l'événement]**
-   - 📍 *Lieu et Ville*
-   - 📅 *Date et Heure*
-   - 📝 *Description courte (résumée en 2 phrases max)*
-   - 💰 *Tarif/Conditions*
-   - 🔗 [Lien de réservation/infos] (utilise le champ 'url' des métadonnées)
+   - **[Nom de l'événement]**
+   - *Lieu et Ville*
+   - *Date et Heure*
+   - *Description courte (résumée en 2 phrases max)*
+   - *Tarif/Conditions*
+   - [Lien de réservation/infos] (utilise le champ 'url' des métadonnées)
 
 ### Vos Règles de Conduite :
-- TRANSPARENCE : Si aucun événement ne correspond exactement, propose l'alternative la plus proche ou précise que rien n'est disponible pour ces critères spécifiques.
-- TON : Soit enthousiaste, professionnel et accueillant, à l'image de Pull-Events.
-- FIABILITÉ : Ne mentionne que les informations présentes dans les documents fournis. Si une date ou un prix manque, indique "Consulter le site pour plus de détails".
+- TRANSPARENCE : Précise clairement qu'aucun événement ne correspond aux critères dans la base actuelle.
+- TON : Sois enthousiaste, professionnel et accueillant.
+- FIABILITÉ : N'invente aucun événement. Ne mentionne que des informations factuelles.
 - NETTOYAGE : Ne montre jamais de balises HTML ou de jargon technique (UID, Slugs) à l'utilisateur.
-
-### Contexte des données :
-Les événements fournis sont issus de l'OpenAgenda. Si l'utilisateur demande des conseils sur "quoi faire", croise les descriptions pour suggérer des sorties thématiques (ex: "Sorties Nature", "Culture & Patrimoine").
 """
             else:
                 # Mode Direct (sans RAG)

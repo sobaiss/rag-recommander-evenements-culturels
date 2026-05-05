@@ -1,10 +1,13 @@
+import datetime
 import json
 import logging
-import requests
+import os
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+import requests
+from bs4 import BeautifulSoup
 from langchain_community.document_loaders import CSVLoader
 from langchain_core.documents import Document
-from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -74,7 +77,8 @@ def create_document_from_record(record: dict) -> Document:
         f"TITRE: {record.get('title_fr', '')}\n"
         f"LIEU: {record.get('location_name', '')} ({record.get('location_city', '')})\n"
         f"DESCRIPTION: {description}\n"
-        f"TAGS: {record.get('keywords_fr', '')}"
+        f"TAGS: {record.get('keywords_fr', '')}\n"
+        f"DATES : du {record.get('firstdate_begin', '')} au {record.get('lastdate_begin', '')}\n"
     )
 
     metadata = extract_metadata(record)
@@ -152,3 +156,89 @@ def _load_from_json_file(input_file: str) -> list:
             documents.append(doc)
 
     return documents
+
+
+def load_documents_from_url_paginated(base_url: str, max_records: int = 120) -> list:
+    """Charge les documents depuis l'API OpenAgenda avec pagination automatique.
+
+    Args:
+        base_url: URL de base (déjà construite avec les filtres région/date).
+        max_records: Nombre maximum de documents à récupérer.
+
+    Returns:
+        Liste de Documents LangChain.
+    """
+    documents: list = []
+    rows_per_page = 40
+    start = 0
+    total_hits: int | None = None
+
+    parsed = urlparse(base_url)
+    base_params = parse_qs(parsed.query, keep_blank_values=True)
+
+    while len(documents) < max_records:
+        # Reconstruire l'URL avec start/rows mis à jour
+        page_params = {
+            k: (v[0] if len(v) == 1 else v) for k, v in base_params.items()
+        }
+        page_params["start"] = start
+        page_params["rows"] = rows_per_page
+        url = urlunparse(parsed._replace(query=urlencode(page_params, doseq=True)))
+
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as e:
+            logging.error(f"Erreur lors du chargement (page start={start}): {e}")
+            raise
+
+        if total_hits is None:
+            total_hits = data.get("nhits", 0)
+            logging.info(f"Total disponible sur l'API: {total_hits} enregistrements")
+
+        records = data.get("records", [])
+        if not records:
+            break
+
+        for record in records:
+            fields = record.get("fields", {})
+            doc = create_document_from_record(fields)
+            documents.append(doc)
+            if len(documents) >= max_records:
+                break
+
+        start += len(records)
+        if total_hits is not None and start >= total_hits:
+            break
+
+    logging.info(
+        f"Chargement terminé: {len(documents)} documents récupérés "
+        f"(sur {total_hits} disponibles)."
+    )
+    return documents
+
+
+def save_documents_to_json(documents: list, folder: str = "data") -> str:
+    """Sauvegarde les documents dans un fichier JSON horodaté.
+
+    Args:
+        documents: Liste de Documents LangChain.
+        folder: Dossier de destination.
+
+    Returns:
+        Chemin absolu du fichier créé.
+    """
+    os.makedirs(folder, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = os.path.join(folder, f"openagenda_{timestamp}.json")
+
+    records = [
+        {"page_content": doc.page_content, "metadata": doc.metadata}
+        for doc in documents
+    ]
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+
+    logging.info(f"Données sauvegardées dans {filepath} ({len(documents)} documents).")
+    return filepath
