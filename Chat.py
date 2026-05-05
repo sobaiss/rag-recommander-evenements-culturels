@@ -172,9 +172,16 @@ for message in st.session_state.messages:
 
 # Zone de saisie utilisateur en bas
 if prompt := st.chat_input("Posez votre question ici..."):
+    # Obtenir la date du jour et le mois en cours
+    now = datetime.datetime.now()
+    current_date = now.strftime("%Y-%m-%d")
+    current_month = now.strftime("%B %Y")
+
+    logging.info(f"La date courante est: {current_date} et le mois est: {current_month}")
+
     # Ajouter le message utilisateur à l'historique et l'afficher
     st.session_state.messages.append(
-        {"role": "user", "content": prompt, "timestamp": datetime.datetime.now().isoformat()}
+        {"role": "user", "content": prompt, "timestamp": now.isoformat()}
     )
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -231,11 +238,15 @@ if prompt := st.chat_input("Posez votre question ici..."):
 
                 # Prompt système pour le mode RAG
                 system_prompt = f"""Vous êtes un assistant virtuel pour {COMPANY_NAME}.
-Répondez à la question de l'utilisateur en vous basant UNIQUEMENT sur le contexte fourni ci-dessous.
+Répondez à la question de l'utilisateur en vous basant UNIQUEMENT sur le CONTEXTE DES DOCUMENTS ci-dessous.
 Si l'information n'est pas dans le contexte, dites que vous ne savez pas ou que l'information n'est pas disponible dans les documents fournis.
 Soyez concis et précis. Citez vos sources si possible (par exemple, en mentionnant le nom du fichier ou la catégorie trouvée dans les métadonnées).
 
-Contexte fourni:
+CONTEXTE TEMPOREL :
+- Date d'aujourd'hui : {current_date}
+- Mois actuel : {current_month}
+
+CONTEXTE DES DOCUMENTS:
 ---
 {context_str}
 ---
@@ -251,9 +262,10 @@ Contexte fourni:
 Votre rôle est d'aider les utilisateurs à trouver l'événement idéal en fonction de leurs envies, de leur localisation et de leur budget.
 
 ### Vos Instructions :
-1. ANALYSE DE LA REQUÊTE : Identifie l'intention de l'utilisateur (thématique, ville, période, gratuité).
-2. SÉLECTION DES ÉVÉNEMENTS : Utilise les documents fournis pour proposer les options les plus pertinentes.
-3. STRUCTURE DE LA RÉPONSE : Pour chaque événement recommandé, utilise toujours ce format clair :
+1. ANALYSE DE LA REQUÊTE : Identifie l'intention de l'utilisateur (thématique, ville, période, gratuité). 
+2. ANALYSE DE LA DATE: Si l'utilisateur utilise des termes comme "ce mois", "à venir" ou "dernier", réfère-toi au CONTEXTE TEMPOREL pour interpréter la période correcte par rapport aux dates présentes dans le CONTEXTE DES DOCUMENTS.
+3. SÉLECTION DES ÉVÉNEMENTS : Utilise les documents fournis pour proposer les options les plus pertinentes.
+4. STRUCTURE DE LA RÉPONSE : Pour chaque événement recommandé, utilise toujours ce format clair :
    - 📅 **[Nom de l'événement]**
    - 📍 *Lieu et Ville*
    - 📅 *Date et Heure*
@@ -280,6 +292,11 @@ Les événements fournis sont issus de l'OpenAgenda. Si l'utilisateur demande de
                 # Prompt système pour le mode Direct
                 system_prompt = f"""Vous êtes un assistant virtuel pour {COMPANY_NAME}.
 Répondez à la question de l'utilisateur en utilisant vos connaissances générales.
+
+CONTEXTE TEMPOREL :
+- Date d'aujourd'hui : {current_date}
+- Mois actuel : {current_month}
+
 Soyez concis, précis et utile.
 Si la question concerne des informations spécifiques aux événements de {COMPANY_NAME} que vous ne connaissez pas, indiquez clairement que vous n'avez pas cette information spécifique.
 N'inventez pas d'informations sur {COMPANY_NAME}.
@@ -352,7 +369,7 @@ N'inventez pas d'informations sur {COMPANY_NAME}.
                     "role": "assistant",
                     "content": response_text,
                     "sources": sources_for_log,  # Garder les sources pour réaffichage
-                    "timestamp": datetime.datetime.now().isoformat(),
+                    "timestamp": now.isoformat(),
                     "interaction_id": interaction_id,  # Lier le message à l'ID BDD
                 }
             )
@@ -373,7 +390,7 @@ N'inventez pas d'informations sur {COMPANY_NAME}.
                     "role": "assistant",
                     "content": f"Erreur: {e}",
                     "sources": [],
-                    "timestamp": datetime.datetime.now().isoformat(),
+                    "timestamp": now.isoformat(),
                     "interaction_id": None,
                 }
             )
