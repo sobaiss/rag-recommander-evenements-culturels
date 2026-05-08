@@ -2,7 +2,6 @@
 import datetime
 import logging
 import os
-import urllib.parse
 
 import streamlit as st
 from mistralai.client import Mistral
@@ -23,7 +22,7 @@ from utils.config import (
     FRENCH_CITIES,
 )
 from utils.database import log_interaction, update_feedback  # Importez update_feedback
-from utils.load_data import load_documents_from_url_paginated, save_documents_to_json
+from utils.load_data import build_openagenda_url, load_documents_from_url_paginated, save_documents_to_json
 from utils.query_classifier import QueryClassifier
 from utils.vector_store import VectorStoreManager
 
@@ -41,25 +40,6 @@ class StreamlitLogHandler(logging.Handler):
         self.records.append(self.format(record))
 
 
-def build_openagenda_url(cities: list[str], begin_date, rows: int = 40, start: int = 0) -> str:
-    """Construit l'URL OpenAgenda avec les filtres ville et date."""
-    params = [
-        ("rows", rows),
-        ("disjunctive.keywords_fr", "true"),
-        ("disjunctive.location_region", "true"),
-        ("disjunctive.location_countrycode", "true"),
-        ("disjunctive.location_department", "true"),
-        ("disjunctive.location_city", "true"),
-        ("start", start),
-        ("dataset", "evenements-publics-openagenda"),
-        ("timezone", "Europe/Berlin"),
-        ("lang", "fr"),
-    ]
-    for city in cities:
-        params.append(("refine.location_city", city))
-    if begin_date:
-        params.append(("refine.firstdate_begin", begin_date.strftime("%Y/%m")))
-    return "https://public.opendatasoft.com/api/records/1.0/search/?" + urllib.parse.urlencode(params)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -485,7 +465,13 @@ if prompt := st.chat_input("Posez votre question ici..."):
 ## Instructions
 - Répondez UNIQUEMENT à partir du CONTEXTE DES DOCUMENTS ci-dessous.
 - Si l'information demandée n'est pas dans les documents, dites-le explicitement.
-- Pour chaque événement recommandé, indiquez sa date exacte issue du document.
+- Pour chaque événement recommandé, utilise toujours ce format clair :
+   - **[Nom de l'événement]**
+   - *Lieu et Ville*
+   - *Date et Heure*
+   - *Description courte (résumée en 2 phrases max)*
+   - *Tarif/Conditions*
+   - [Lien de réservation/infos] (utilise le champ 'url' des métadonnées)
 
 ## Contexte des documents
 ---
@@ -510,13 +496,6 @@ Votre rôle est d'aider les utilisateurs à trouver l'événement idéal en fonc
 1. ANALYSE DE LA REQUÊTE : Identifie l'intention de l'utilisateur (thématique, ville, période, gratuité).
 2. ANALYSE DE LA DATE : Si l'utilisateur utilise des termes comme "ce mois", "à venir" ou "dernier", réfère-toi à la DATE ACTUELLE ci-dessus ({current_month}) pour interpréter la période correcte.
 3. AUCUN RÉSULTAT : La recherche dans la base de connaissances n'a retourné aucun document pertinent. Informe l'utilisateur qu'aucun événement correspondant n'a été trouvé dans la base indexée, et invite-le à reformuler ou à essayer une réindexation avec d'autres filtres.
-4. STRUCTURE DE LA RÉPONSE : Pour chaque événement recommandé, utilise toujours ce format clair :
-   - **[Nom de l'événement]**
-   - *Lieu et Ville*
-   - *Date et Heure*
-   - *Description courte (résumée en 2 phrases max)*
-   - *Tarif/Conditions*
-   - [Lien de réservation/infos] (utilise le champ 'url' des métadonnées)
 
 ### Vos Règles de Conduite :
 - TRANSPARENCE : Précise clairement qu'aucun événement ne correspond aux critères dans la base actuelle.
@@ -548,6 +527,7 @@ N'inventez pas d'informations sur {COMPANY_NAME}.
             messages_for_api = [system_message, user_message]
 
             # 3. Appel à l'API Mistral Chat
+            mode_info.info(f"Appel de l'API Mistral Chat avec le modèle {selected_model}...")
             logging.info(f"Appel de l'API Mistral Chat avec le modèle {selected_model}...")
             chat_response = client.chat.complete(
                 model=selected_model,

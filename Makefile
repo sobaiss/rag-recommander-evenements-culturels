@@ -1,4 +1,4 @@
-.PHONY: help index lint lint-fix run clean install reset
+.PHONY: help index lint lint-fix run api test clean install reset
 
 # Load environment variables from .env file
 ifneq (,$(wildcard .env))
@@ -13,7 +13,9 @@ help:
 	@echo "                       make index                                    # Use defaults"
 	@echo "                       make index input-file=/path/to/file           # Custom input file"
 	@echo "                       make index data-url=https://example.com/data   # Custom data URL"
-	@echo "  make run         - Run the main application"
+	@echo "  make chat        - Run the Streamlit chat UI"
+	@echo "  make api         - Run the FastAPI REST server (http://localhost:8000)"
+	@echo "  make test        - Run functional tests"
 	@echo "  make lint        - Run Ruff linter on the project"
 	@echo "  make lint-fix    - Auto-fix linting issues"
 	@echo "  make install     - Install project dependencies"
@@ -32,6 +34,12 @@ feedback:
 
 run:
 	uv run main.py
+
+api:
+	uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+test:
+	uv run pytest tests/ -v
 
 lint:
 	ruff check .

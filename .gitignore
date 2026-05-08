@@ -10,6 +10,8 @@ wheels/
 .venv
 
 .env
+.pytest_cache
+.ruff_cache
 data
 database
 vector_db

@@ -86,6 +86,44 @@ def create_document_from_record(record: dict) -> Document:
 
     return Document(page_content=page_content, metadata=metadata)
 
+def build_openagenda_url(
+    cities: list[str],
+    begin_date: "datetime.date | str | None" = None,
+    rows: int = 40,
+) -> str:
+    """Construit l'URL OpenAgenda avec les filtres ville et date.
+
+    Args:
+        cities: Liste de villes à filtrer (vide = toute la France).
+        begin_date: Date de début sous forme de ``datetime.date`` ou chaîne
+            ``YYYY-MM-DD``. Seuls le mois et l'année sont utilisés.
+        rows: Nombre de résultats par page (pagination gérée par
+            ``load_documents_from_url_paginated``).
+    """
+    params: list[tuple] = [
+        ("rows", rows),
+        ("disjunctive.keywords_fr", "true"),
+        ("disjunctive.location_region", "true"),
+        ("disjunctive.location_countrycode", "true"),
+        ("disjunctive.location_department", "true"),
+        ("disjunctive.location_city", "true"),
+        ("start", 0),
+        ("dataset", "evenements-publics-openagenda"),
+        ("timezone", "Europe/Berlin"),
+        ("lang", "fr"),
+    ]
+    for city in cities:
+        params.append(("refine.location_city", city))
+    if begin_date:
+        date_obj = (
+            datetime.date.fromisoformat(begin_date)
+            if isinstance(begin_date, str)
+            else begin_date
+        )
+        params.append(("refine.firstdate_begin", date_obj.strftime("%Y/%m")))
+    return "https://public.opendatasoft.com/api/records/1.0/search/?" + urlencode(params)
+
+
 def load_documents_from_file(input_file: str):
     """Charge les documents depuis un fichier local (JSON ou CSV)."""
     if input_file.endswith(".json"):
