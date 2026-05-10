@@ -135,7 +135,9 @@ async def test_ask_rag_custom_k_and_min_score(http_client):
         json={"question": "Expositions ce mois ?", "k": 10, "min_score": 0.5},
     )
 
-    mock_store.search.assert_called_once_with("Expositions ce mois ?", k=10, min_score=0.5)
+    call = mock_store.search.call_args
+    assert call.kwargs["k"] == 10
+    assert call.kwargs["min_score"] == 0.5
 
 
 # ──────────────────────────────────────────────────────────────────────────────

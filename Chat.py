@@ -23,6 +23,8 @@ from utils.config import (
 )
 from utils.database import log_interaction, update_feedback  # Importez update_feedback
 from utils.load_data import build_openagenda_url, load_documents_from_url_paginated, save_documents_to_json
+from utils.prompts import direct_system_prompt, rag_system_prompt
+from utils.query_utils import expand_temporal_query
 from utils.query_classifier import QueryClassifier
 from utils.vector_store import VectorStoreManager
 
@@ -429,7 +431,10 @@ if prompt := st.chat_input("Posez votre question ici..."):
                 logging.info(
                     f"Recherche de documents pour: '{prompt}' (max: {num_docs}, score min: {min_score})"
                 )
-                retrieved_docs = vector_store.search(prompt, k=num_docs, min_score=min_score)
+                search_query = expand_temporal_query(prompt, today=datetime.date.today())
+                if search_query != prompt:
+                    logging.info(f"Requête augmentée : {search_query!r}")
+                retrieved_docs = vector_store.search(search_query, k=num_docs, min_score=min_score)
             else:
                 mode_info.info(
                     f"Mode Direct: Réponse basée sur les connaissances générales du modèle (confiance: {confidence:.2f})"
@@ -437,105 +442,50 @@ if prompt := st.chat_input("Posez votre question ici..."):
                 # Pas de recherche dans le Vector Store
                 retrieved_docs = []
 
-            # 2. Préparer les données en fonction du mode
-            if needs_rag and retrieved_docs:
-                # Mode RAG avec documents trouvés
-                logging.info(f"{len(retrieved_docs)} documents récupérés.")
-                # Préparer le contexte pour le LLM
-                context_str = "\n\n---\n\n".join(
-                    [
-                        f"Source: {doc['metadata'].get('source', 'Inconnue')} (Score: {doc['score']:.4f})\nContenu: {doc['text']}"
+            # 2. Préparer les données et appeler le LLM
+            if needs_rag and not retrieved_docs:
+                # Court-circuit : pas d'appel LLM si le RAG n'a rien trouvé
+                logging.warning("Aucun document pertinent trouvé — réponse statique, appel LLM ignoré.")
+                sources_for_log = []
+                response_text = (
+                    "Je n'ai trouvé aucun événement correspondant à votre recherche dans la base indexée. "
+                    "Vous pouvez :\n"
+                    "- **Reformuler** votre question en utilisant d'autres mots-clés.\n"
+                    "- **Élargir les critères** (ville, période, thématique).\n"
+                    "- **Réindexer** la base via le panneau **🗄️ Réindexer la base** dans la barre latérale."
+                )
+                mode_info.empty()
+            else:
+                if needs_rag:
+                    logging.info(f"{len(retrieved_docs)} documents récupérés.")
+                    context_str = "\n\n---\n\n".join(
+                        [
+                            f"Source: {doc['metadata'].get('source', 'Inconnue')} (Score: {doc['score']:.4f})\nContenu: {doc['text']}"
+                            for doc in retrieved_docs
+                        ]
+                    )
+                    sources_for_log = [
+                        {"text": doc["text"], "metadata": doc["metadata"], "score": doc["score"]}
                         for doc in retrieved_docs
                     ]
+                    system_prompt = rag_system_prompt(context_str, current_date, current_month)
+                else:
+                    sources_for_log = []
+                    system_prompt = direct_system_prompt(current_date, current_month)
+
+                # 3. Appel à l'API Mistral Chat
+                mode_info.info(f"Appel de l'API Mistral Chat avec le modèle {selected_model}...")
+                logging.info(f"Appel de l'API Mistral Chat avec le modèle {selected_model}...")
+                chat_response = client.chat.complete(
+                    model=selected_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.1,
                 )
-                sources_for_log = [  # Version simplifiée pour le log et l'affichage
-                    {"text": doc["text"], "metadata": doc["metadata"], "score": doc["score"]}
-                    for doc in retrieved_docs
-                ]
-
-                # Prompt système pour le mode RAG
-                system_prompt = f"""Vous êtes un assistant virtuel pour {COMPANY_NAME}, spécialisé dans la recommandation d'événements culturels.
-
-## DATE ACTUELLE (priorité absolue)
-- Aujourd'hui : **{current_date}**
-- Mois en cours : **{current_month}**
-
-⚠️ RÈGLE TEMPORELLE CRITIQUE : Les événements dans les documents ci-dessous ont leurs PROPRES dates (passées ou futures). Ne confondez jamais la date actuelle avec les dates des événements. Lorsque l'utilisateur dit "ce mois", "maintenant", "à venir", cela fait référence à **{current_month}** — pas aux dates présentes dans les documents. Mentionnez toujours la date réelle de chaque événement telle qu'elle figure dans le document. Si un événement est passé par rapport à aujourd'hui ({current_date}), signalez-le clairement.
-
-## Instructions
-- Répondez UNIQUEMENT à partir du CONTEXTE DES DOCUMENTS ci-dessous.
-- Si l'information demandée n'est pas dans les documents, dites-le explicitement.
-- Pour chaque événement recommandé, utilise toujours ce format clair :
-   - **[Nom de l'événement]**
-   - *Lieu et Ville*
-   - *Date et Heure*
-   - *Description courte (résumée en 2 phrases max)*
-   - *Tarif/Conditions*
-   - [Lien de réservation/infos] (utilise le champ 'url' des métadonnées)
-
-## Contexte des documents
----
-{context_str}
----
-"""
-            elif needs_rag and not retrieved_docs:
-                # Mode RAG mais aucun document trouvé
-                logging.warning("Aucun document pertinent trouvé.")
-                context_str = "Aucune information pertinente trouvée dans les documents."
-                sources_for_log = []
-
-                # Prompt système pour le mode RAG sans résultats
-                system_prompt = f"""Vous êtes l'assistant intelligent de {COMPANY_NAME}, une société spécialisée dans la recommandation et la découverte d'événements publics.
-Votre rôle est d'aider les utilisateurs à trouver l'événement idéal en fonction de leurs envies, de leur localisation et de leur budget.
-
-## DATE ACTUELLE
-- Aujourd'hui : **{current_date}**
-- Mois en cours : **{current_month}**
-
-### Vos Instructions :
-1. ANALYSE DE LA REQUÊTE : Identifie l'intention de l'utilisateur (thématique, ville, période, gratuité).
-2. ANALYSE DE LA DATE : Si l'utilisateur utilise des termes comme "ce mois", "à venir" ou "dernier", réfère-toi à la DATE ACTUELLE ci-dessus ({current_month}) pour interpréter la période correcte.
-3. AUCUN RÉSULTAT : La recherche dans la base de connaissances n'a retourné aucun document pertinent. Informe l'utilisateur qu'aucun événement correspondant n'a été trouvé dans la base indexée, et invite-le à reformuler ou à essayer une réindexation avec d'autres filtres.
-
-### Vos Règles de Conduite :
-- TRANSPARENCE : Précise clairement qu'aucun événement ne correspond aux critères dans la base actuelle.
-- TON : Sois enthousiaste, professionnel et accueillant.
-- FIABILITÉ : N'invente aucun événement. Ne mentionne que des informations factuelles.
-- NETTOYAGE : Ne montre jamais de balises HTML ou de jargon technique (UID, Slugs) à l'utilisateur.
-"""
-            else:
-                # Mode Direct (sans RAG)
-                context_str = (
-                    "Mode direct: réponse basée sur les connaissances générales du modèle."
-                )
-                sources_for_log = []
-
-                # Prompt système pour le mode Direct
-                system_prompt = f"""Vous êtes un assistant virtuel pour {COMPANY_NAME}.
-Répondez à la question de l'utilisateur en utilisant vos connaissances générales.
-
-CONTEXTE TEMPOREL :
-- Date d'aujourd'hui : {current_date}
-- Mois actuel : {current_month}
-
-Soyez concis, précis et utile.
-Si la question concerne des informations spécifiques aux événements de {COMPANY_NAME} que vous ne connaissez pas, indiquez clairement que vous n'avez pas cette information spécifique.
-N'inventez pas d'informations sur {COMPANY_NAME}.
-"""
-            user_message = {"role": "user", "content": prompt}
-            system_message = {"role": "system", "content": system_prompt}
-            messages_for_api = [system_message, user_message]
-
-            # 3. Appel à l'API Mistral Chat
-            mode_info.info(f"Appel de l'API Mistral Chat avec le modèle {selected_model}...")
-            logging.info(f"Appel de l'API Mistral Chat avec le modèle {selected_model}...")
-            chat_response = client.chat.complete(
-                model=selected_model,
-                messages=messages_for_api,
-                temperature=0.1,  # Température basse pour des réponses factuelles basées sur le contexte
-            )
-            response_text = chat_response.choices[0].message.content
-            logging.info("Réponse générée par Mistral.")
+                response_text = chat_response.choices[0].message.content
+                logging.info("Réponse générée par Mistral.")
 
             # 4. Afficher la réponse et les sources
             message_placeholder.markdown(response_text)

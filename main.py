@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 from utils.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
-    COMPANY_NAME,
     DOCUMENT_CHUNKS_FILE,
     EMBEDDING_MODEL,
     FAISS_INDEX_FILE,
@@ -19,7 +18,9 @@ from utils.config import (
     MISTRAL_API_KEY,
 )
 from utils.load_data import build_openagenda_url, load_documents_from_url_paginated, save_documents_to_json
+from utils.prompts import direct_system_prompt, rag_no_results_system_prompt, rag_system_prompt
 from utils.query_classifier import QueryClassifier
+from utils.query_utils import expand_temporal_query
 from utils.vector_store import VectorStoreManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -141,41 +142,6 @@ class HealthResponse(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Fonctions utilitaires internes
-# ──────────────────────────────────────────────────────────────────────────────
-def _rag_system_prompt(context_str: str, current_date: str, current_month: str) -> str:
-    return f"""Vous êtes un assistant virtuel pour {COMPANY_NAME}, spécialisé dans la recommandation d'événements culturels.
-
-## DATE ACTUELLE (priorité absolue)
-- Aujourd'hui : **{current_date}**
-- Mois en cours : **{current_month}**
-
-⚠️ RÈGLE TEMPORELLE CRITIQUE : Les événements dans les documents ont leurs PROPRES dates. Ne confondez jamais la date actuelle avec les dates des événements. "Ce mois" fait référence à **{current_month}**. Signalez clairement les événements passés.
-
-## Instructions
-- Répondez UNIQUEMENT à partir du CONTEXTE DES DOCUMENTS ci-dessous.
-- Si l'information n'est pas dans les documents, dites-le explicitement.
-- Pour chaque événement recommandé, indiquez sa date exacte issue du document.
-
-## Contexte des documents
----
-{context_str}
----
-"""
-
-
-def _direct_system_prompt(current_date: str, current_month: str) -> str:
-    return f"""Vous êtes un assistant virtuel pour {COMPANY_NAME}.
-Répondez en utilisant vos connaissances générales.
-
-## DATE ACTUELLE
-- Aujourd'hui : **{current_date}**
-- Mois en cours : **{current_month}**
-
-Soyez concis et précis. N'inventez pas d'informations sur {COMPANY_NAME}."""
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Endpoints
 # ──────────────────────────────────────────────────────────────────────────────
 @app.get(
@@ -236,7 +202,10 @@ def ask(request: AskRequest) -> AskResponse:
     # 2. Recherche vectorielle (mode RAG uniquement)
     sources: list[SourceModel] = []
     if needs_rag:
-        retrieved = vector_store.search(request.question, k=request.k, min_score=request.min_score)
+        search_query = expand_temporal_query(request.question, today=datetime.date.today())
+        if search_query != request.question:
+            logging.info(f"/ask — requête augmentée : {search_query!r}")
+        retrieved = vector_store.search(search_query, k=request.k, min_score=request.min_score)
         sources = [
             SourceModel(text=doc["text"], score=doc["score"], metadata=doc["metadata"])
             for doc in retrieved
@@ -248,9 +217,11 @@ def ask(request: AskRequest) -> AskResponse:
             f"Source: {s.metadata.get('source', 'Inconnue')} (Score: {s.score:.2f}%)\nContenu: {s.text}"
             for s in sources
         )
-        system_prompt = _rag_system_prompt(context_str, current_date, current_month)
+        system_prompt = rag_system_prompt(context_str, current_date, current_month)
+    elif needs_rag:
+        system_prompt = rag_no_results_system_prompt(current_date, current_month)
     else:
-        system_prompt = _direct_system_prompt(current_date, current_month)
+        system_prompt = direct_system_prompt(current_date, current_month)
 
     # 4. Génération de la réponse
     try:
