@@ -1,4 +1,3 @@
-import datetime
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -18,9 +17,8 @@ from utils.config import (
     MISTRAL_API_KEY,
 )
 from utils.load_data import build_openagenda_url, load_documents_from_url_paginated, save_documents_to_json
-from utils.prompts import direct_system_prompt, rag_no_results_system_prompt, rag_system_prompt
 from utils.query_classifier import QueryClassifier
-from utils.query_utils import expand_temporal_query
+from utils.rag_pipeline import RAGPipeline
 from utils.vector_store import VectorStoreManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -190,50 +188,13 @@ def ask(request: AskRequest) -> AskResponse:
             detail="La clé API Mistral (MISTRAL_API_KEY) n'est pas configurée.",
         )
 
-    now = datetime.datetime.now()
-    current_date = now.strftime("%Y-%m-%d")
-    current_month = now.strftime("%B %Y")
-
-    # 1. Classification
-    needs_rag, confidence, reason = query_classifier.needs_rag(request.question)
-    mode = "RAG" if needs_rag else "DIRECT"
-    logging.info(f"/ask — mode={mode} confiance={confidence:.2f} raison='{reason}'")
-
-    # 2. Recherche vectorielle (mode RAG uniquement)
-    sources: list[SourceModel] = []
-    if needs_rag:
-        search_query = expand_temporal_query(request.question, today=datetime.date.today())
-        if search_query != request.question:
-            logging.info(f"/ask — requête augmentée : {search_query!r}")
-        retrieved = vector_store.search(search_query, k=request.k, min_score=request.min_score)
-        sources = [
-            SourceModel(text=doc["text"], score=doc["score"], metadata=doc["metadata"])
-            for doc in retrieved
-        ]
-
-    # 3. Construction du prompt système
-    if needs_rag and sources:
-        context_str = "\n\n---\n\n".join(
-            f"Source: {s.metadata.get('source', 'Inconnue')} (Score: {s.score:.2f}%)\nContenu: {s.text}"
-            for s in sources
-        )
-        system_prompt = rag_system_prompt(context_str, current_date, current_month)
-    elif needs_rag:
-        system_prompt = rag_no_results_system_prompt(current_date, current_month)
-    else:
-        system_prompt = direct_system_prompt(current_date, current_month)
-
-    # 4. Génération de la réponse
     try:
-        chat_response = mistral_client.chat.complete(
+        result = RAGPipeline(query_classifier, vector_store, mistral_client).run(
+            question=request.question,
+            k=request.k,
+            min_score=request.min_score,
             model=request.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": request.question},
-            ],
-            temperature=0.1,
         )
-        answer = chat_response.choices[0].message.content
     except Exception as exc:
         logging.error(f"Erreur API Mistral: {exc}")
         raise HTTPException(
@@ -242,12 +203,12 @@ def ask(request: AskRequest) -> AskResponse:
         )
 
     return AskResponse(
-        answer=answer,
-        mode=mode,
-        confidence=confidence,
-        reason=reason,
-        sources=sources,
-        model_used=request.model,
+        answer=result.answer,
+        mode=result.mode,
+        confidence=result.confidence,
+        reason=result.reason,
+        sources=[SourceModel(**s) for s in result.sources],
+        model_used=result.model_used,
     )
 
 

@@ -23,9 +23,8 @@ from utils.config import (
 )
 from utils.database import log_interaction, update_feedback  # Importez update_feedback
 from utils.load_data import build_openagenda_url, load_documents_from_url_paginated, save_documents_to_json
-from utils.prompts import direct_system_prompt, rag_system_prompt
-from utils.query_utils import expand_temporal_query
 from utils.query_classifier import QueryClassifier
+from utils.rag_pipeline import RAGPipeline
 from utils.vector_store import VectorStoreManager
 
 class StreamlitLogHandler(logging.Handler):
@@ -412,80 +411,24 @@ if prompt := st.chat_input("Posez votre question ici..."):
 
         # --- Logique de traitement de la requête ---
         try:
-            # 1. Classifier la requête pour déterminer si elle nécessite RAG
-            needs_rag, confidence, reason = query_classifier.needs_rag(prompt)
-
-            # Afficher le résultat de la classification
-            mode_str = "RAG" if needs_rag else "DIRECT"
-            logging.info(
-                f"Classification de la requête: {mode_str} (confiance: {confidence:.2f}) - Raison: {reason}"
+            result = RAGPipeline(query_classifier, vector_store, client).run(
+                question=prompt,
+                k=num_docs,
+                min_score=min_score,
+                model=selected_model,
             )
 
-            # Afficher un message indiquant le mode utilisé
+            needs_rag = result.mode == "RAG"
+            confidence = result.confidence
+            reason = result.reason
+            response_text = result.answer
+            sources_for_log = result.sources
+
             mode_info = st.empty()
-            if needs_rag:
-                mode_info.info(
-                    f"Mode RAG: Recherche d'informations spécifiques dans la base de connaissances (confiance: {confidence:.2f})"
-                )
-                # 2. Recherche dans le Vector Store si nécessaire
-                logging.info(
-                    f"Recherche de documents pour: '{prompt}' (max: {num_docs}, score min: {min_score})"
-                )
-                search_query = expand_temporal_query(prompt, today=datetime.date.today())
-                if search_query != prompt:
-                    logging.info(f"Requête augmentée : {search_query!r}")
-                retrieved_docs = vector_store.search(search_query, k=num_docs, min_score=min_score)
-            else:
-                mode_info.info(
-                    f"Mode Direct: Réponse basée sur les connaissances générales du modèle (confiance: {confidence:.2f})"
-                )
-                # Pas de recherche dans le Vector Store
-                retrieved_docs = []
-
-            # 2. Préparer les données et appeler le LLM
-            if needs_rag and not retrieved_docs:
-                # Court-circuit : pas d'appel LLM si le RAG n'a rien trouvé
-                logging.warning("Aucun document pertinent trouvé — réponse statique, appel LLM ignoré.")
-                sources_for_log = []
-                response_text = (
-                    "Je n'ai trouvé aucun événement correspondant à votre recherche dans la base indexée. "
-                    "Vous pouvez :\n"
-                    "- **Reformuler** votre question en utilisant d'autres mots-clés.\n"
-                    "- **Élargir les critères** (ville, période, thématique).\n"
-                    "- **Réindexer** la base via le panneau **🗄️ Réindexer la base** dans la barre latérale."
-                )
-                mode_info.empty()
-            else:
-                if needs_rag:
-                    logging.info(f"{len(retrieved_docs)} documents récupérés.")
-                    context_str = "\n\n---\n\n".join(
-                        [
-                            f"Source: {doc['metadata'].get('source', 'Inconnue')} (Score: {doc['score']:.4f})\nContenu: {doc['text']}"
-                            for doc in retrieved_docs
-                        ]
-                    )
-                    sources_for_log = [
-                        {"text": doc["text"], "metadata": doc["metadata"], "score": doc["score"]}
-                        for doc in retrieved_docs
-                    ]
-                    system_prompt = rag_system_prompt(context_str, current_date, current_month)
-                else:
-                    sources_for_log = []
-                    system_prompt = direct_system_prompt(current_date, current_month)
-
-                # 3. Appel à l'API Mistral Chat
-                mode_info.info(f"Appel de l'API Mistral Chat avec le modèle {selected_model}...")
-                logging.info(f"Appel de l'API Mistral Chat avec le modèle {selected_model}...")
-                chat_response = client.chat.complete(
-                    model=selected_model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.1,
-                )
-                response_text = chat_response.choices[0].message.content
-                logging.info("Réponse générée par Mistral.")
+            if needs_rag and sources_for_log:
+                mode_info.info(f"Mode RAG — {confidence:.2f} de confiance")
+            elif not needs_rag:
+                mode_info.info(f"Mode Direct — {confidence:.2f} de confiance")
 
             # 4. Afficher la réponse et les sources
             message_placeholder.markdown(response_text)
