@@ -1,0 +1,80 @@
+name: RAG Evaluation (Ragas)
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Every Monday at 08:00 UTC
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Compute eval_events.json hash (for cache key)
+        id: hash
+        run: echo "hash=$(sha256sum data/eval_events.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore FAISS index cache
+        id: cache-index
+        uses: actions/cache@v4
+        with:
+          path: vector_db_eval/
+          key: faiss-eval-${{ steps.hash.outputs.hash }}
+
+      - name: Build FAISS index from eval dataset
+        if: steps.cache-index.outputs.cache-hit != 'true'
+        run: uv run indexer.py --input-file data/eval_events.json --vector-db-dir vector_db_eval
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+
+      - name: Run Ragas evaluation
+        run: uv run evaluate_rag.py --dataset data/eval_dataset.json --report data/eval_report.json
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+
+      - name: Upload evaluation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report-${{ github.run_id }}
+          path: data/eval_report.json
+          retention-days: 30
+
+      - name: Print report summary
+        if: always()
+        run: |
+          echo "## Ragas Evaluation Results" >> "$GITHUB_STEP_SUMMARY"
+          python3 - << 'EOF'
+          import json, os
+          try:
+              with open("data/eval_report.json") as f:
+                  r = json.load(f)
+              lines = []
+              for metric, score in r["scores"].items():
+                  threshold = r["thresholds"][metric]
+                  ok = "✅" if r["passed"][metric] else "❌"
+                  lines.append(f"| {ok} | {metric} | {score:.3f} | {threshold} |")
+              header = "| | Metric | Score | Threshold |\n|---|---|---|---|\n"
+              print(header + "\n".join(lines))
+              overall = "✅ All thresholds met" if r["all_passed"] else "❌ Some thresholds not met"
+              print(f"\n**Overall:** {overall}")
+          except FileNotFoundError:
+              print("Report not found.")
+          EOF

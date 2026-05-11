@@ -34,7 +34,7 @@ def extract_metadata(record: dict) -> dict:
     metadata["status"] = record.get("status")
     # Nettoyage optionnel du prix pour un filtrage futur
     conditions = str(record.get("conditions_fr", "")).lower()
-    metadata["est_gratuit"] = "gratuit" in conditions or "07,00" not in conditions
+    metadata["est_gratuit"] = "tarif" not in conditions
     
     # Le champ registration peut être une chaîne JSON ou déjà un dict
     registration = record.get("registration", "")
@@ -78,6 +78,7 @@ def create_document_from_record(record: dict) -> Document:
         f"LIEU: {record.get('location_name', '')} ({record.get('location_city', '')})\n"
         f"DESCRIPTION: {description}\n"
         f"TAGS: {record.get('keywords_fr', '')}\n"
+        f"PRIX: {record.get('conditions_fr', '')}\n"
         f"DATES : du {record.get('firstdate_begin', '')} au {record.get('lastdate_begin', '')}\n"
     )
 
@@ -159,13 +160,12 @@ def load_documents_from_url(url: str) -> list:
                 documents.append(doc)
         elif isinstance(data, dict):
             # Gérer différents formats de réponse API
-            if "records" in data:
-                for item in data["records"]:
-                    if "fields" in item:
-                        doc = create_document_from_record(item["fields"])
-                        documents.append(doc)
+            if "results" in data:
+                for item in data["results"]:
+                    doc = create_document_from_record(item)
+                    documents.append(doc)
             else:
-                logging.warning("Format de données inattendu: ni liste ni dict avec 'records'.")
+                logging.warning("Format de données inattendu: ni liste ni dict avec 'results'.")
         
         logging.info(f"Chargé {len(documents)} documents depuis l'URL")
         return documents

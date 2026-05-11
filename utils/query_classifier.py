@@ -21,7 +21,7 @@ class QueryClassifier:
         """
         self.mistral_client = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
 
-        # Mots-clés liés à la commune qui suggèrent un besoin de RAG
+        # Mots-clés qui suggèrent un besoin de RAG
         self.events_company_keywords = [
             COMPANY_NAME.lower(),
             "événement",
@@ -34,12 +34,8 @@ class QueryClassifier:
             "activité",
             "loisir",
             "culturel",
-            "gratuit",
-            "payant",
-            "inscription",
-            "horaires",
-            "adresse",
-            "contact",
+            "musique",
+            "films",
         ]
 
         # Questions générales qui ne nécessitent pas de RAG
@@ -70,11 +66,11 @@ class QueryClassifier:
             if re.match(pattern, query_lower):
                 return False, 0.95, "Question générale ou salutation"
 
-        # 2. Vérifier la présence de mots-clés liés à la commune
-        commune_keywords_found = [kw for kw in self.events_company_keywords if kw in query_lower]
-        if commune_keywords_found:
-            keywords_str = ", ".join(commune_keywords_found)
-            return True, 0.9, f"Contient des mots-clés liés à la commune: {keywords_str}"
+        # 2. Vérifier la présence de mots-clés
+        events_keywords_found = [kw for kw in self.events_company_keywords if kw in query_lower]
+        if events_keywords_found:
+            keywords_str = ", ".join(events_keywords_found)
+            return True, 0.9, f"Contient des mots-clés liés aux évnènements: {keywords_str}"
 
         # 3. Utiliser le LLM pour les cas ambigus
         if self.mistral_client:

@@ -1,5 +1,4 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -10,10 +9,7 @@ from pydantic import BaseModel, Field
 from utils.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
-    DOCUMENT_CHUNKS_FILE,
     EMBEDDING_MODEL,
-    FAISS_INDEX_FILE,
-    INDEX_METADATA_FILE,
     MISTRAL_API_KEY,
 )
 from utils.load_data import build_openagenda_url, load_documents_from_url_paginated, save_documents_to_json
@@ -265,10 +261,9 @@ def rebuild(request: RebuildRequest) -> RebuildResponse:
     logging.info(f"Données sauvegardées : {data_file}")
 
     # 4. Suppression de l'ancien index
-    for path in [FAISS_INDEX_FILE, DOCUMENT_CHUNKS_FILE, INDEX_METADATA_FILE]:
-        if os.path.exists(path):
-            os.remove(path)
-            logging.info(f"Supprimé : {path}")
+    existing_store: VectorStoreManager | None = _state.get("vector_store")
+    if existing_store:
+        existing_store.clear_index()
 
     # 5. Construction du nouvel index
     try:

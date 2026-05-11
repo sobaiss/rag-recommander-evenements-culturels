@@ -1,4 +1,4 @@
-.PHONY: help index lint lint-fix run api test clean install reset
+.PHONY: help index lint lint-fix run api test eval eval-build clean install reset
 
 # Load environment variables from .env file
 ifneq (,$(wildcard .env))
@@ -20,6 +20,8 @@ help:
 	@echo "  make lint-fix    - Auto-fix linting issues"
 	@echo "  make install     - Install project dependencies"
 	@echo "  make clean       - Remove cache files and artifacts"
+	@echo "  make eval-build  - Build FAISS index from eval fixture (data/eval_events.json)"
+	@echo "  make eval        - Run Ragas evaluation (requires eval-build first + MISTRAL_API_KEY)"
 	@echo "  make reset       - Reset the application state (asks for confirmation)"
 
 index:
@@ -30,7 +32,7 @@ chat:
 	uv run streamlit run Chat.py
 
 feedback:
-	uv run streamlit run pages/Feedback_Viewer.py
+	uv run streamlit run FeedbackViewer.py
 
 run:
 	uv run main.py
@@ -40,6 +42,12 @@ api:
 
 test:
 	uv run pytest tests/ -v
+
+eval-build:
+	uv run indexer.py --input-file data/eval_events.json --vector-db-dir vector_db_eval
+
+eval:
+	uv run evaluate_rag.py --dataset data/eval_dataset.json --report data/eval_report.json --evaluator=mistral
 
 lint:
 	ruff check .

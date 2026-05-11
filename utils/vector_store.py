@@ -14,12 +14,10 @@ from mistralai.client import Mistral
 from utils.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
-    DOCUMENT_CHUNKS_FILE,
     EMBEDDING_BATCH_SIZE,
     EMBEDDING_MODEL,
-    FAISS_INDEX_FILE,
-    INDEX_METADATA_FILE,
     MISTRAL_API_KEY,
+    VECTOR_DB_DIR,
 )
 
 
@@ -35,7 +33,12 @@ class VectorStoreManager:
         embedding_model: str = None,
         chunk_size: int = None,
         chunk_overlap: int = None,
+        vector_db_dir: str = VECTOR_DB_DIR,
     ):
+        self._faiss_index_file = os.path.join(vector_db_dir, "faiss_index.idx")
+        self._document_chunks_file = os.path.join(vector_db_dir, "document_chunks.pkl")
+        self._index_metadata_file = os.path.join(vector_db_dir, "index_metadata.json")
+
         saved_meta = self._read_metadata()
 
         self.embedding_model = (
@@ -66,9 +69,9 @@ class VectorStoreManager:
     # ------------------------------------------------------------------
 
     def _read_metadata(self) -> dict | None:
-        if os.path.exists(INDEX_METADATA_FILE):
+        if os.path.exists(self._index_metadata_file):
             try:
-                with open(INDEX_METADATA_FILE, "r", encoding="utf-8") as f:
+                with open(self._index_metadata_file, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
                 return None
@@ -78,7 +81,7 @@ class VectorStoreManager:
         return self._read_metadata()
 
     def _save_metadata(self, num_documents: int, num_chunks: int) -> None:
-        os.makedirs(os.path.dirname(INDEX_METADATA_FILE), exist_ok=True)
+        os.makedirs(os.path.dirname(self._index_metadata_file), exist_ok=True)
         meta = {
             "embedding_model": self.embedding_model,
             "chunk_size": self.chunk_size,
@@ -87,7 +90,7 @@ class VectorStoreManager:
             "num_documents": num_documents,
             "num_chunks": num_chunks,
         }
-        with open(INDEX_METADATA_FILE, "w", encoding="utf-8") as f:
+        with open(self._index_metadata_file, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
 
     # ------------------------------------------------------------------
@@ -115,11 +118,11 @@ class VectorStoreManager:
     # ------------------------------------------------------------------
 
     def _load_index_and_chunks(self) -> None:
-        if os.path.exists(FAISS_INDEX_FILE) and os.path.exists(DOCUMENT_CHUNKS_FILE):
+        if os.path.exists(self._faiss_index_file) and os.path.exists(self._document_chunks_file):
             try:
-                logging.info(f"Chargement de l'index Faiss depuis {FAISS_INDEX_FILE}.")
-                self.index = faiss.read_index(FAISS_INDEX_FILE)
-                with open(DOCUMENT_CHUNKS_FILE, "rb") as f:
+                logging.info(f"Chargement de l'index Faiss depuis {self._faiss_index_file}.")
+                self.index = faiss.read_index(self._faiss_index_file)
+                with open(self._document_chunks_file, "rb") as f:
                     self.document_chunks = pickle.load(f)
                 logging.info(
                     f"Index ({self.index.ntotal} vecteurs) et "
@@ -138,13 +141,13 @@ class VectorStoreManager:
         if self.index is None or not self.document_chunks:
             logging.warning("Tentative de sauvegarde d'un index ou de chunks vides.")
             return
-        os.makedirs(os.path.dirname(FAISS_INDEX_FILE), exist_ok=True)
-        os.makedirs(os.path.dirname(DOCUMENT_CHUNKS_FILE), exist_ok=True)
+        os.makedirs(os.path.dirname(self._faiss_index_file), exist_ok=True)
+        os.makedirs(os.path.dirname(self._document_chunks_file), exist_ok=True)
         try:
-            logging.info(f"Sauvegarde de l'index Faiss dans {FAISS_INDEX_FILE}...")
-            faiss.write_index(self.index, FAISS_INDEX_FILE)
-            logging.info(f"Sauvegarde des chunks dans {DOCUMENT_CHUNKS_FILE}...")
-            with open(DOCUMENT_CHUNKS_FILE, "wb") as f:
+            logging.info(f"Sauvegarde de l'index Faiss dans {self._faiss_index_file}...")
+            faiss.write_index(self.index, self._faiss_index_file)
+            logging.info(f"Sauvegarde des chunks dans {self._document_chunks_file}...")
+            with open(self._document_chunks_file, "wb") as f:
                 pickle.dump(self.document_chunks, f)
             logging.info("Index et chunks sauvegardés avec succès.")
         except Exception as e:
@@ -182,7 +185,7 @@ class VectorStoreManager:
             logging.error("Échec de la génération des embeddings. L'index ne sera pas construit.")
             self.document_chunks = []
             self.index = None
-            for path in [FAISS_INDEX_FILE, DOCUMENT_CHUNKS_FILE]:
+            for path in [self._faiss_index_file, self._document_chunks_file]:
                 if os.path.exists(path):
                     os.remove(path)
             return
@@ -381,7 +384,7 @@ class VectorStoreManager:
         self.index = None
         self.document_chunks = []
         self._hf_model = None
-        for path in [FAISS_INDEX_FILE, DOCUMENT_CHUNKS_FILE, INDEX_METADATA_FILE]:
+        for path in [self._faiss_index_file, self._document_chunks_file, self._index_metadata_file]:
             if os.path.exists(path):
                 os.remove(path)
                 logging.info(f"Fichier supprimé: {path}")

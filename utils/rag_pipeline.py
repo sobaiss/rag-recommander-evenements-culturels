@@ -2,7 +2,7 @@ import datetime
 import logging
 from dataclasses import dataclass, field
 
-from utils.prompts import direct_system_prompt, rag_system_prompt
+from utils.prompts import rag_no_results_system_prompt, rag_system_prompt
 from utils.query_utils import expand_temporal_query
 
 NO_RESULTS_ANSWER = (
@@ -81,7 +81,7 @@ class RAGPipeline:
             )
             system_prompt = rag_system_prompt(context_str, current_date, current_month)
         else:
-            system_prompt = direct_system_prompt(current_date, current_month)
+            system_prompt = rag_no_results_system_prompt(current_date)
 
         # 5. Génération de la réponse (exceptions propagées vers l'appelant)
         chat_response = self.mistral_client.chat.complete(
