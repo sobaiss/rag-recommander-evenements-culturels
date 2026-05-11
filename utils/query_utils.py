@@ -1,6 +1,15 @@
 import datetime
 import re
 
+_FRENCH_MONTHS = {
+    "janvier": 1, "février": 2, "mars": 3, "avril": 4,
+    "mai": 5, "juin": 6, "juillet": 7, "août": 8,
+    "septembre": 9, "octobre": 10, "novembre": 11, "décembre": 12,
+}
+_MONTH_PATTERN = re.compile(
+    r"\b(" + "|".join(_FRENCH_MONTHS.keys()) + r")\s+(\d{4})\b"
+)
+
 
 def expand_temporal_query(query: str, today: datetime.date | None = None) -> str:
     """Augmente la requête avec les dates ISO réelles des expressions temporelles françaises.
@@ -8,6 +17,9 @@ def expand_temporal_query(query: str, today: datetime.date | None = None) -> str
     Exemple :
         "événements semaine prochaine" (le 2026-05-10)
         → "événements semaine prochaine [période: du 2026-05-11 au 2026-05-17]"
+
+        "concerts de jazz en mai 2026"
+        → "concerts de jazz en mai 2026 [période: du 2026-05-01 au 2026-05-31]"
 
     Cela permet à l'embedding FAISS de mieux matcher les chunks qui contiennent
     des dates explicites comme "DATES : du 2026-05-11 au 2026-05-15".
@@ -18,7 +30,19 @@ def expand_temporal_query(query: str, today: datetime.date | None = None) -> str
     q = query.lower()
     hint: str | None = None
 
-    if re.search(r"\baujourd['\s]?hui\b", q):
+    # Patterns explicites "mois année" (ex: "mai 2026", "en janvier 2025")
+    month_year_match = _MONTH_PATTERN.search(q)
+    if month_year_match:
+        month_num = _FRENCH_MONTHS[month_year_match.group(1)]
+        year = int(month_year_match.group(2))
+        first = datetime.date(year, month_num, 1)
+        if month_num == 12:
+            last = datetime.date(year, 12, 31)
+        else:
+            last = datetime.date(year, month_num + 1, 1) - datetime.timedelta(days=1)
+        hint = f"du {first.isoformat()} au {last.isoformat()}"
+
+    elif re.search(r"\baujourd['\s]?hui\b", q):
         hint = today.isoformat()
 
     elif re.search(r"\bdemain\b", q):

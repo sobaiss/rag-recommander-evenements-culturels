@@ -25,16 +25,17 @@ def extract_metadata(record: dict) -> dict:
     
     # On extrait les infos utiles pour le filtrage et l'affichage
     metadata["uid"] = record.get("uid")
-    metadata["url"] = record.get("canonicalurl")
-    metadata["ville"] = record.get("location_city")
-    metadata["date_debut"] = record.get("firstdate_begin")
-    metadata["date_fin"] = record.get("lastdate_begin")
-    metadata["prix"] = record.get("conditions_fr")
-    metadata["image"] = record.get("thumbnail")
+    # metadata["url"] = record.get("canonicalurl", "")
+    metadata["city"] = ", ".join([record.get("location_city", ""), record.get("location_region", "")])
+    metadata["start_date"] = str(record.get("firstdate_begin", ""))[:10]
+    metadata["end_date"] = str(record.get("lastdate_begin"))[:10]
+    metadata["price"] = record.get("conditions_fr")
     metadata["status"] = record.get("status")
+    metadata["keywords"] = ", ".join(record.get("keywords_fr", []))
     # Nettoyage optionnel du prix pour un filtrage futur
     conditions = str(record.get("conditions_fr", "")).lower()
-    metadata["est_gratuit"] = "tarif" not in conditions
+    metadata["is_free"] = "tarif" not in conditions
+    metadata["source"] = record.get("canonicalurl", "")
     
     # Le champ registration peut être une chaîne JSON ou déjà un dict
     registration = record.get("registration", "")
@@ -46,25 +47,11 @@ def extract_metadata(record: dict) -> dict:
             else:
                 registration_data = json.loads(registration)
             if isinstance(registration_data, list) and len(registration_data) > 0:
-                metadata["lien_inscription"] = registration_data[0].get("value", "")
+                metadata["registration_link"] = registration_data[0].get("value", "")
             else:
-                metadata["lien_inscription"] = ""
+                metadata["registration"] = ""
         except (json.JSONDecodeError, TypeError):
-            metadata["lien_inscription"] = ""
-
-    # Le champ location_coordinates peut être une chaîne JSON ou déjà un dict
-    coordinates = record.get("location_coordinates", "")
-    if coordinates:
-        try:
-            # Si c'est déjà un dict, pas besoin de le parser
-            if isinstance(coordinates, dict):
-                coord_data = coordinates
-            else:
-                coord_data = json.loads(coordinates)
-            metadata["latitude"] = coord_data.get("lat")
-            metadata["longitude"] = coord_data.get("lon")
-        except (json.JSONDecodeError, TypeError):
-            pass
+            metadata["registration_link"] = ""
 
     return metadata
 
@@ -77,13 +64,10 @@ def create_document_from_record(record: dict) -> Document:
         f"TITRE: {record.get('title_fr', '')}\n"
         f"LIEU: {record.get('location_name', '')} ({record.get('location_city', '')})\n"
         f"DESCRIPTION: {description}\n"
-        f"TAGS: {record.get('keywords_fr', '')}\n"
-        f"PRIX: {record.get('conditions_fr', '')}\n"
-        f"DATES : du {record.get('firstdate_begin', '')} au {record.get('lastdate_begin', '')}\n"
+        # f"PERIODE : du {record.get('firstdate_begin', '')} au {record.get('lastdate_begin', '')}\n"
     )
 
     metadata = extract_metadata(record)
-    metadata["source"] = record.get("canonicalurl", "")
 
     return Document(page_content=page_content, metadata=metadata)
 

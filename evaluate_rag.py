@@ -48,6 +48,14 @@ THRESHOLDS = {
 
 EVAL_VECTOR_DB_DIR = "vector_db_eval"
 
+from langchain_core.callbacks.base import BaseCallbackHandler
+
+class DebugCallback(BaseCallbackHandler):
+    def on_llm_start(self, serialized, prompts, **kwargs):
+        print("=== PROMPTS ENVOYÉS À MISTRAL ===")
+        for p in prompts:
+            print(p)
+            print("-" * 80)
 
 def load_dataset(path: str) -> list[dict]:
     with open(path, encoding="utf-8") as f:
@@ -219,7 +227,7 @@ def evaluate(dataset, evaluator: str, ollama_model: str, ollama_embed: str) -> d
     answer_relevancy.llm = llm
     answer_relevancy.embeddings = embeddings
 
-    kwargs = {"dataset": dataset, "metrics": metrics}
+    kwargs = {"dataset": dataset, "metrics": metrics, "callbacks": [DebugCallback()]}
     if run_config is not None:
         kwargs["run_config"] = run_config
 

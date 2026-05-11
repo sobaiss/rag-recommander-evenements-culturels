@@ -75,7 +75,9 @@ def get_query_classifier():
 
 
 # Charge le Vector Store, le client Mistral et le classificateur de requêtes
-vector_store = get_vector_store()
+if "vector_store" not in st.session_state:
+    st.session_state.vector_store = get_vector_store()
+vector_store = st.session_state.vector_store
 client = get_mistral_client()
 query_classifier = get_query_classifier()
 
@@ -328,8 +330,9 @@ if st.session_state.show_reindex_form:
 
                     new_store.build_index(documents, progress_callback=_progress)
 
-                    # Rechargement du cache Streamlit
+                    # Rechargement du cache Streamlit + mise à jour immédiate du store actif
                     get_vector_store.clear()
+                    st.session_state.vector_store = new_store
 
                     # Résultats
                     final_meta = new_store.get_metadata()
@@ -344,7 +347,6 @@ if st.session_state.show_reindex_form:
                         f"- Chevauchement : {final_meta.get('chunk_overlap')} caractères\n"
                         f"- Créé le : {(final_meta.get('created_at') or '')[:19]}"
                     )
-                    st.info("💡 Rechargez la page (F5) pour utiliser le nouvel index dans le chat.")
                     st.session_state.show_reindex_form = False
 
                 except Exception as exc:

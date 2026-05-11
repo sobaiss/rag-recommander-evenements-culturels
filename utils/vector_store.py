@@ -215,11 +215,12 @@ class VectorStoreManager:
             logging.info(
                 f"  Document '{doc.metadata.get('uid', 'N/A')}' découpé en {len(chunks)} chunks."
             )
+            periode_metadata = f"PERIODE: du {doc.metadata.get('date_debut', '')} au {doc.metadata.get('date_fin', '')}"
             for i, chunk in enumerate(chunks):
                 all_chunks.append(
                     {
                         "id": f"doc{doc_counter}_{i}",
-                        "text": chunk.page_content,
+                        "text": f"{periode_metadata}\n{chunk.page_content}",
                         "metadata": {
                             **chunk.metadata,
                             "chunk_id_in_doc": i,
