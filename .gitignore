@@ -12,7 +12,7 @@ wheels/
 .env
 .pytest_cache
 .ruff_cache
-data
+data/openagenda*
+data/eval_report.json
 database
 vector_db
-vector_db_eval
