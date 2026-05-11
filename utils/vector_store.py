@@ -8,12 +8,9 @@ from typing import Callable
 import faiss
 import numpy as np
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from mistralai.client import Mistral
 
 from utils.config import (
-    CHUNK_OVERLAP,
-    CHUNK_SIZE,
     EMBEDDING_BATCH_SIZE,
     EMBEDDING_MODEL,
     MISTRAL_API_KEY,
@@ -31,8 +28,6 @@ class VectorStoreManager:
     def __init__(
         self,
         embedding_model: str = None,
-        chunk_size: int = None,
-        chunk_overlap: int = None,
         vector_db_dir: str = VECTOR_DB_DIR,
     ):
         self._faiss_index_file = os.path.join(vector_db_dir, "faiss_index.idx")
@@ -45,16 +40,6 @@ class VectorStoreManager:
             embedding_model
             or (saved_meta.get("embedding_model") if saved_meta else None)
             or EMBEDDING_MODEL
-        )
-        self.chunk_size = (
-            chunk_size
-            if chunk_size is not None
-            else (saved_meta.get("chunk_size") if saved_meta else None) or CHUNK_SIZE
-        )
-        self.chunk_overlap = (
-            chunk_overlap
-            if chunk_overlap is not None
-            else (saved_meta.get("chunk_overlap") if saved_meta else None) or CHUNK_OVERLAP
         )
 
         self.index: faiss.Index | None = None
@@ -80,15 +65,12 @@ class VectorStoreManager:
     def get_metadata(self) -> dict | None:
         return self._read_metadata()
 
-    def _save_metadata(self, num_documents: int, num_chunks: int) -> None:
+    def _save_metadata(self, num_documents: int) -> None:
         os.makedirs(os.path.dirname(self._index_metadata_file), exist_ok=True)
         meta = {
             "embedding_model": self.embedding_model,
-            "chunk_size": self.chunk_size,
-            "chunk_overlap": self.chunk_overlap,
             "created_at": datetime.datetime.now().isoformat(),
             "num_documents": num_documents,
-            "num_chunks": num_chunks,
         }
         with open(self._index_metadata_file, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
@@ -173,7 +155,7 @@ class VectorStoreManager:
             logging.warning("Aucun document fourni pour la construction de l'index.")
             return
 
-        _progress(f"Découpage des documents en chunks (taille={self.chunk_size}, overlap={self.chunk_overlap})...")
+        _progress("Création des chunks (1 document = 1 chunk)...")
         self.document_chunks = self._split_documents_to_chunks(documents)
         if not self.document_chunks:
             logging.warning("Aucun chunk généré à partir des documents fournis.")
@@ -199,35 +181,19 @@ class VectorStoreManager:
 
         _progress("Sauvegarde de l'index et des chunks sur le disque...")
         self._save_index_and_chunks()
-        self._save_metadata(num_documents=len(documents), num_chunks=len(self.document_chunks))
+        self._save_metadata(num_documents=len(documents))
         _progress(f"Index sauvegardé — {len(documents)} documents, {len(self.document_chunks)} chunks.")
 
     def _split_documents_to_chunks(self, documents: list[Document]) -> list[dict]:
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            length_function=len,
-            add_start_index=True,
-        )
         all_chunks = []
         for doc_counter, doc in enumerate(documents):
-            chunks = text_splitter.split_documents([doc])
-            logging.info(
-                f"  Document '{doc.metadata.get('uid', 'N/A')}' découpé en {len(chunks)} chunks."
+            all_chunks.append(
+                {
+                    "id": f"doc{doc_counter}_0",
+                    "text": f"{doc.page_content}",
+                    "metadata": doc.metadata,
+                }
             )
-            periode_metadata = f"PERIODE: du {doc.metadata.get('date_debut', '')} au {doc.metadata.get('date_fin', '')}"
-            for i, chunk in enumerate(chunks):
-                all_chunks.append(
-                    {
-                        "id": f"doc{doc_counter}_{i}",
-                        "text": f"{periode_metadata}\n{chunk.page_content}",
-                        "metadata": {
-                            **chunk.metadata,
-                            "chunk_id_in_doc": i,
-                            "start_index": chunk.metadata.get("start_index", -1),
-                        },
-                    }
-                )
         return all_chunks
 
     # ------------------------------------------------------------------

@@ -11,8 +11,6 @@ from streamlit_feedback import streamlit_feedback  # Importez le composant
 from utils.config import (
     APP_TITLE,
     AVAILABLE_EMBEDDING_MODELS,
-    CHUNK_OVERLAP,
-    CHUNK_SIZE,
     COMPANY_NAME,
     DOCUMENT_CHUNKS_FILE,
     EMBEDDING_MODEL,
@@ -203,8 +201,6 @@ if st.session_state.show_reindex_form:
 
     current_meta = vector_store.get_metadata()
     default_model = (current_meta or {}).get("embedding_model", EMBEDDING_MODEL)
-    default_chunk_size = (current_meta or {}).get("chunk_size", CHUNK_SIZE)
-    default_chunk_overlap = (current_meta or {}).get("chunk_overlap", CHUNK_OVERLAP)
 
     model_keys = list(AVAILABLE_EMBEDDING_MODELS.keys())
     default_model_idx = model_keys.index(default_model) if default_model in model_keys else 0
@@ -219,22 +215,6 @@ if st.session_state.show_reindex_form:
                 format_func=lambda x: AVAILABLE_EMBEDDING_MODELS[x],
                 index=default_model_idx,
                 help="mistral-embed utilise l'API Mistral. Les autres modèles sont locaux (nécessitent sentence-transformers).",
-            )
-            chunk_size = st.number_input(
-                "Taille des chunks (caractères) *",
-                min_value=100,
-                max_value=10000,
-                value=int(default_chunk_size),
-                step=100,
-                help="Nombre de caractères par chunk. Valeur recommandée : 2000.",
-            )
-            chunk_overlap = st.number_input(
-                "Chevauchement des chunks (caractères) *",
-                min_value=0,
-                max_value=2000,
-                value=int(default_chunk_overlap),
-                step=50,
-                help="Doit être strictement inférieur à la taille des chunks.",
             )
 
         with col2:
@@ -265,12 +245,6 @@ if st.session_state.show_reindex_form:
     if submitted:
         # --- Validation ---
         errors = []
-        if chunk_size <= 0:
-            errors.append("La taille des chunks doit être un entier positif.")
-        if chunk_overlap < 0:
-            errors.append("Le chevauchement ne peut pas être négatif.")
-        if chunk_overlap >= chunk_size:
-            errors.append("Le chevauchement doit être strictement inférieur à la taille des chunks.")
         if not begin_date and not locations:
             errors.append("Veuillez sélectionner au moins une région ou une date de début.")
 
@@ -319,11 +293,7 @@ if st.session_state.show_reindex_form:
                             "(première utilisation = téléchargement, cela peut prendre quelques minutes)..."
                         )
 
-                    new_store = VectorStoreManager(
-                        embedding_model=embedding_model,
-                        chunk_size=int(chunk_size),
-                        chunk_overlap=int(chunk_overlap),
-                    )
+                    new_store = VectorStoreManager(embedding_model=embedding_model)
 
                     def _progress(msg: str) -> None:
                         st.write(f"   → {msg}")
@@ -341,10 +311,7 @@ if st.session_state.show_reindex_form:
                     st.success(
                         f"**Réindexation réussie !**\n\n"
                         f"- Modèle d'embedding : `{final_meta.get('embedding_model')}`\n"
-                        f"- Documents récupérés : **{final_meta.get('num_documents', 0)}**\n"
-                        f"- Chunks créés : **{final_meta.get('num_chunks', 0)}**\n"
-                        f"- Taille des chunks : {final_meta.get('chunk_size')} caractères\n"
-                        f"- Chevauchement : {final_meta.get('chunk_overlap')} caractères\n"
+                        f"- Documents indexés : **{final_meta.get('num_documents', 0)}**\n"
                         f"- Créé le : {(final_meta.get('created_at') or '')[:19]}"
                     )
                     st.session_state.show_reindex_form = False

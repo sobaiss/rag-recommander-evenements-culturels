@@ -76,5 +76,5 @@ def expand_temporal_query(query: str, today: datetime.date | None = None) -> str
         hint = f"du {first.isoformat()} au {last.isoformat()}"
 
     if hint:
-        return f"{query} [période: {hint}]"
+        return f"{query} [date: {hint}]"
     return query

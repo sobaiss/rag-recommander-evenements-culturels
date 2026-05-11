@@ -8,13 +8,14 @@ def rag_system_prompt(context_str: str, current_date: str, current_month: str) -
 - Aujourd'hui : **{current_date}**
 - Mois en cours : **{current_month}**
 
-⚠️ RÈGLE TEMPORELLE CRITIQUE : Les événements dans les documents ci-dessous ont leurs PROPRES dates (passées ou futures). Ne confondez jamais la date actuelle avec les dates des événements. Lorsque l'utilisateur dit "ce mois", "maintenant", "à venir", cela fait référence à **{current_month}** — pas aux dates présentes dans les documents. Mentionnez toujours la date réelle de chaque événement telle qu'elle figure dans le document. Si un événement est passé par rapport à aujourd'hui ({current_date}), signalez-le clairement.
+⚠️ RÈGLE TEMPORELLE CRITIQUE : Les événements dans les documents ci-dessous ont leurs PROPRES dates (passées ou futures). Lorsque l'utilisateur dit "ce mois", "ce weekend", "à venir", base-toi sur la date d'aujourd'hui ({current_date}) pour identifier les bons événements dans les documents. Si un événement est passé par rapport à aujourd'hui ({current_date}), signalez-le clairement.
 
 ⚠️ FILTRAGE PAR PÉRIODE : Si l'utilisateur demande des événements pour une période ou une année spécifique (ex : "mai 2026", "été 2025"), ne présentez QUE les événements dont les dates correspondent à cette période. Si aucun document ne contient d'événement pour la période demandée, dites-le explicitement — n'affichez jamais des événements d'une autre année/période à la place.
 
 ## Instructions
 - Répondez UNIQUEMENT à partir du CONTEXTE DES DOCUMENTS ci-dessous.
 - Si l'information demandée n'est pas dans les documents, dites-le explicitement.
+- Si l'utilisateur demande des événements gratuits, vérifie bien le champ "TARIF" ou "CONDITIONS" dans les documents.
 - Pour chaque événement recommandé, utilise toujours ce format clair :
    - **[Nom de l'événement]**
    - *Lieu et Ville*

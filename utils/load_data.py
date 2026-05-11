@@ -25,8 +25,8 @@ def extract_metadata(record: dict) -> dict:
     
     # On extrait les infos utiles pour le filtrage et l'affichage
     metadata["uid"] = record.get("uid")
-    # metadata["url"] = record.get("canonicalurl", "")
-    metadata["city"] = ", ".join([record.get("location_city", ""), record.get("location_region", "")])
+    metadata["city"] = record.get("location_city", "")
+    metadata["region"] = record.get("location_region", "")
     metadata["start_date"] = str(record.get("firstdate_begin", ""))[:10]
     metadata["end_date"] = str(record.get("lastdate_begin"))[:10]
     metadata["price"] = record.get("conditions_fr")
@@ -36,7 +36,7 @@ def extract_metadata(record: dict) -> dict:
     conditions = str(record.get("conditions_fr", "")).lower()
     metadata["is_free"] = "tarif" not in conditions
     metadata["source"] = record.get("canonicalurl", "")
-    
+
     # Le champ registration peut être une chaîne JSON ou déjà un dict
     registration = record.get("registration", "")
     if registration:
@@ -59,15 +59,15 @@ def create_document_from_record(record: dict) -> Document:
     """Crée un Document langchain à partir d'un enregistrement JSON."""
     # La description contient des balises HTML, ils faut les supprimier pour éviter d'avoir du bruit dans les embeddings
     description = clean_html(record.get("longdescription_fr", ""))
+    metadata = extract_metadata(record)
 
     page_content = (
-        f"TITRE: {record.get('title_fr', '')}\n"
+        f"NOM DE L'ÉVÉNEMENT: {record.get('title_fr', '')}\n"
+        f"DATE : du {metadata["start_date"]} au {metadata["end_date"]}\n"
         f"LIEU: {record.get('location_name', '')} ({record.get('location_city', '')})\n"
+        f"TARIF: {"Gratuit" if metadata["is_free"] else metadata["price"]}\n"
         f"DESCRIPTION: {description}\n"
-        # f"PERIODE : du {record.get('firstdate_begin', '')} au {record.get('lastdate_begin', '')}\n"
     )
-
-    metadata = extract_metadata(record)
 
     return Document(page_content=page_content, metadata=metadata)
 
