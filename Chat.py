@@ -15,15 +15,20 @@ from utils.config import (
     DOCUMENT_CHUNKS_FILE,
     EMBEDDING_MODEL,
     FAISS_INDEX_FILE,
-    INDEX_METADATA_FILE,
-    MISTRAL_API_KEY,
     FRENCH_CITIES,
+    INDEX_METADATA_FILE,
 )
+from utils.container import AppContainer, build_container
 from utils.database import log_interaction, update_feedback  # Importez update_feedback
-from utils.load_data import build_openagenda_url, load_documents_from_url_paginated, save_documents_to_json
+from utils.load_data import (
+    build_openagenda_url,
+    load_documents_from_url_paginated,
+    save_documents_to_json,
+)
 from utils.query_classifier import QueryClassifier
 from utils.rag_pipeline import RAGPipeline
 from utils.vector_store import VectorStoreManager
+
 
 class StreamlitLogHandler(logging.Handler):
     """Capture les messages logging Python pour les afficher dans Streamlit."""
@@ -32,15 +37,18 @@ class StreamlitLogHandler(logging.Handler):
         super().__init__()
         self.records: list[str] = []
         self.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"
+            )
         )
 
     def emit(self, record: logging.LogRecord) -> None:
         self.records.append(self.format(record))
 
 
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 # --- Configuration de la page Streamlit ---
 st.set_page_config(page_title=APP_TITLE, page_icon="📚", layout="wide")
@@ -48,36 +56,22 @@ st.set_page_config(page_title=APP_TITLE, page_icon="📚", layout="wide")
 # --- Initialisation (avec mise en cache Streamlit) ---
 
 
-# Met en cache le VectorStoreManager pour éviter de recharger l'index à chaque interaction
 @st.cache_resource
-def get_vector_store():
-    logging.info("Chargement du VectorStoreManager...")
-    return VectorStoreManager()
-
-
-# Met en cache le client Mistral
-@st.cache_resource
-def get_mistral_client():
-    if not MISTRAL_API_KEY:
+def get_app_container() -> AppContainer:
+    container = build_container()
+    if container.mistral_client is None:
         st.error("Erreur: La clé API Mistral (MISTRAL_API_KEY) n'est pas configurée.")
         st.stop()
-    logging.info("Initialisation du client Mistral...")
-    return Mistral(api_key=MISTRAL_API_KEY)
+    return container
 
 
-# Met en cache le classificateur de requêtes
-@st.cache_resource
-def get_query_classifier():
-    logging.info("Initialisation du classificateur de requêtes...")
-    return QueryClassifier()
-
-
-# Charge le Vector Store, le client Mistral et le classificateur de requêtes
+# Charge le conteneur applicatif (VectorStore, Mistral, QueryClassifier)
+_container = get_app_container()
 if "vector_store" not in st.session_state:
-    st.session_state.vector_store = get_vector_store()
-vector_store = st.session_state.vector_store
-client = get_mistral_client()
-query_classifier = get_query_classifier()
+    st.session_state.vector_store = _container.vector_store
+vector_store: VectorStoreManager = st.session_state.vector_store
+client: Mistral = _container.mistral_client  # type: ignore[assignment]
+query_classifier: QueryClassifier = _container.query_classifier
 
 # Initialise l'historique du chat dans l'état de la session s'il n'existe pas
 if "messages" not in st.session_state:
@@ -146,11 +140,15 @@ with st.sidebar:
     # Informations sur l'application
     st.subheader("📝 Informations")
     st.markdown(f"**Modèle sélectionné**: {model_options[selected_model]}")
-    st.markdown(f"**Documents indexés**: {vector_store.index.ntotal if vector_store.index else 0}")
+    st.markdown(
+        f"**Documents indexés**: {vector_store.index.ntotal if vector_store.index else 0}"
+    )
 
     # Informations sur la conversation actuelle
     if st.session_state.messages:
-        st.info(f"{len(st.session_state.messages) // 2} échanges dans cette conversation")
+        st.info(
+            f"{len(st.session_state.messages) // 2} échanges dans cette conversation"
+        )
 
         # Bouton pour télécharger la conversation
         # Préparer le contenu de la conversation au format texte
@@ -182,14 +180,20 @@ with st.sidebar:
     current_meta = vector_store.get_metadata()
     if current_meta:
         st.caption(f"Modèle : `{current_meta.get('embedding_model', 'N/A')}`")
-        st.caption(f"Chunks : {current_meta.get('num_chunks', 0)} · Docs : {current_meta.get('num_documents', 0)}")
+        st.caption(
+            f"Chunks : {current_meta.get('num_chunks', 0)} · Docs : {current_meta.get('num_documents', 0)}"
+        )
         created = current_meta.get("created_at", "")[:10]
         if created:
             st.caption(f"Créé le : {created}")
     else:
         st.caption("Aucun index chargé.")
 
-    reindex_label = "🔼 Masquer la réindexation" if st.session_state.show_reindex_form else "🔄 Réindexer la base"
+    reindex_label = (
+        "🔼 Masquer la réindexation"
+        if st.session_state.show_reindex_form
+        else "🔄 Réindexer la base"
+    )
     if st.button(reindex_label, use_container_width=True):
         st.session_state.show_reindex_form = not st.session_state.show_reindex_form
         st.rerun()
@@ -197,13 +201,17 @@ with st.sidebar:
 # --- Formulaire de réindexation (zone principale) ---
 if st.session_state.show_reindex_form:
     st.header("🗄️ Réindexation de la base de connaissances")
-    st.caption("Configurez les paramètres puis lancez la réindexation depuis l'API OpenAgenda.")
+    st.caption(
+        "Configurez les paramètres puis lancez la réindexation depuis l'API OpenAgenda."
+    )
 
     current_meta = vector_store.get_metadata()
     default_model = (current_meta or {}).get("embedding_model", EMBEDDING_MODEL)
 
     model_keys = list(AVAILABLE_EMBEDDING_MODELS.keys())
-    default_model_idx = model_keys.index(default_model) if default_model in model_keys else 0
+    default_model_idx = (
+        model_keys.index(default_model) if default_model in model_keys else 0
+    )
 
     with st.form("reindex_form"):
         col1, col2 = st.columns(2)
@@ -240,13 +248,17 @@ if st.session_state.show_reindex_form:
                 help="Limite le nombre d'événements récupérés depuis l'API.",
             )
 
-        submitted = st.form_submit_button("🚀 Lancer la réindexation", use_container_width=True, type="primary")
+        submitted = st.form_submit_button(
+            "🚀 Lancer la réindexation", use_container_width=True, type="primary"
+        )
 
     if submitted:
         # --- Validation ---
         errors = []
         if not begin_date and not locations:
-            errors.append("Veuillez sélectionner au moins une région ou une date de début.")
+            errors.append(
+                "Veuillez sélectionner au moins une région ou une date de début."
+            )
 
         if errors:
             for err in errors:
@@ -263,30 +275,48 @@ if st.session_state.show_reindex_form:
                     st.code(url, language=None)
 
                     # 2. Récupération des données
-                    st.write("📥 **Étape 2/5** — Récupération des données (avec pagination)...")
-                    documents = load_documents_from_url_paginated(url, max_records=max_records)
+                    st.write(
+                        "📥 **Étape 2/5** — Récupération des données (avec pagination)..."
+                    )
+                    documents = load_documents_from_url_paginated(
+                        url, max_records=max_records
+                    )
                     if not documents:
-                        reindex_status.update(label="❌ Aucun événement trouvé", state="error")
-                        st.error("Aucun événement ne correspond aux critères sélectionnés. Essayez d'autres filtres.")
+                        reindex_status.update(
+                            label="❌ Aucun événement trouvé", state="error"
+                        )
+                        st.error(
+                            "Aucun événement ne correspond aux critères sélectionnés. Essayez d'autres filtres."
+                        )
                         logging.getLogger().removeHandler(_log_handler)
                         st.stop()
-                    st.write(f"✅ **{len(documents)} événements** récupérés depuis l'API.")
+                    st.write(
+                        f"✅ **{len(documents)} événements** récupérés depuis l'API."
+                    )
 
                     # 3. Sauvegarde dans data/
-                    st.write("💾 **Étape 3/5** — Sauvegarde des données dans `data/`...")
+                    st.write(
+                        "💾 **Étape 3/5** — Sauvegarde des données dans `data/`..."
+                    )
                     save_path = save_documents_to_json(documents)
                     st.write(f"✅ Fichier sauvegardé : `{save_path}`")
 
                     # 4. Suppression de l'ancien index
                     st.write("🗑️ **Étape 4/5** — Suppression de l'ancien index FAISS...")
-                    for path in [FAISS_INDEX_FILE, DOCUMENT_CHUNKS_FILE, INDEX_METADATA_FILE]:
+                    for path in [
+                        FAISS_INDEX_FILE,
+                        DOCUMENT_CHUNKS_FILE,
+                        INDEX_METADATA_FILE,
+                    ]:
                         if os.path.exists(path):
                             os.remove(path)
                             st.write(f"   Supprimé : `{path}`")
                     st.write("✅ Ancien index supprimé.")
 
                     # 5. Construction du nouvel index
-                    st.write(f"🔨 **Étape 5/5** — Construction de l'index avec `{embedding_model}`...")
+                    st.write(
+                        f"🔨 **Étape 5/5** — Construction de l'index avec `{embedding_model}`..."
+                    )
                     if not embedding_model.startswith("mistral"):
                         st.write(
                             "📦 Chargement du modèle HuggingFace "
@@ -301,23 +331,27 @@ if st.session_state.show_reindex_form:
                     new_store.build_index(documents, progress_callback=_progress)
 
                     # Rechargement du cache Streamlit + mise à jour immédiate du store actif
-                    get_vector_store.clear()
+                    get_app_container.clear()
                     st.session_state.vector_store = new_store
 
                     # Résultats
                     final_meta = new_store.get_metadata()
-                    reindex_status.update(label="✅ Réindexation terminée avec succès !", state="complete")
+                    reindex_status.update(
+                        label="✅ Réindexation terminée avec succès !", state="complete"
+                    )
 
                     st.success(
                         f"**Réindexation réussie !**\n\n"
-                        f"- Modèle d'embedding : `{final_meta.get('embedding_model')}`\n"
-                        f"- Documents indexés : **{final_meta.get('num_documents', 0)}**\n"
-                        f"- Créé le : {(final_meta.get('created_at') or '')[:19]}"
+                        f"- Modèle d'embedding : `{final_meta.get('embedding_model') if final_meta is not None else ''}`\n"
+                        f"- Documents indexés : **{final_meta.get('num_documents', 0) if final_meta is not None else ''}**\n"
+                        f"- Créé le : {(final_meta.get('created_at') or '')[:19] if final_meta is not None else ''}"
                     )
                     st.session_state.show_reindex_form = False
 
                 except Exception as exc:
-                    reindex_status.update(label="❌ Erreur lors de la réindexation", state="error")
+                    reindex_status.update(
+                        label="❌ Erreur lors de la réindexation", state="error"
+                    )
                     st.error(f"Erreur : {exc}")
                     logging.error("Erreur réindexation", exc_info=True)
 
@@ -338,13 +372,19 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         # Afficher les sources si elles existent pour les messages de l'assistant
-        if message["role"] == "assistant" and "sources" in message and message["sources"]:
+        if (
+            message["role"] == "assistant"
+            and "sources" in message
+            and message["sources"]
+        ):
             with st.expander("Sources utilisées"):
                 for i, source in enumerate(message["sources"]):
                     # Accès sécurisé aux métadonnées
                     meta = source.get("metadata", {})
                     st.markdown(f"**Source {i + 1}:** `{meta.get('source', 'N/A')}`")
-                    st.markdown(f"*Score de similarité:* {source.get('score', 0.0):.2f}%")
+                    st.markdown(
+                        f"*Score de similarité:* {source.get('score', 0.0):.2f}%"
+                    )
                     if "raw_score" in source:
                         st.markdown(f"*Score brut:* {source.get('raw_score', 0.0):.4f}")
                     # st.markdown(f"*Catégorie:* `{meta.get('category', 'N/A')}`")
@@ -364,7 +404,9 @@ if prompt := st.chat_input("Posez votre question ici..."):
     current_date = now.strftime("%Y-%m-%d")
     current_month = now.strftime("%B %Y")
 
-    logging.info(f"La date courante est: {current_date} et le mois est: {current_month}")
+    logging.info(
+        f"La date courante est: {current_date} et le mois est: {current_month}"
+    )
 
     # Ajouter le message utilisateur à l'historique et l'afficher
     st.session_state.messages.append(
@@ -376,7 +418,9 @@ if prompt := st.chat_input("Posez votre question ici..."):
     # Afficher un message d'attente
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
-        message_placeholder.markdown("🧠 Recherche d'informations et génération de la réponse...")
+        message_placeholder.markdown(
+            "🧠 Recherche d'informations et génération de la réponse..."
+        )
 
         # --- Logique de traitement de la requête ---
         try:
@@ -407,10 +451,16 @@ if prompt := st.chat_input("Posez votre question ici..."):
                 with st.expander("Sources utilisées"):
                     for i, source in enumerate(sources_for_log):
                         meta = source.get("metadata", {})
-                        st.markdown(f"**Source {i + 1}:** `{meta.get('source', 'N/A')}`")
-                        st.markdown(f"*Score de similarité:* {source.get('score', 0.0):.2f}%")
+                        st.markdown(
+                            f"**Source {i + 1}:** `{meta.get('source', 'N/A')}`"
+                        )
+                        st.markdown(
+                            f"*Score de similarité:* {source.get('score', 0.0):.2f}%"
+                        )
                         if "raw_score" in source:
-                            st.markdown(f"*Score brut:* {source.get('raw_score', 0.0):.4f}")
+                            st.markdown(
+                                f"*Score brut:* {source.get('raw_score', 0.0):.4f}"
+                            )
                         # st.markdown(f"*Catégorie:* `{meta.get('category', 'N/A')}`")
                         st.text_area(
                             f"Extrait {i + 1}",
@@ -444,7 +494,9 @@ if prompt := st.chat_input("Posez votre question ici..."):
                 sources=sources_for_log,  # Stocke la liste de dicts
                 metadata=metadata,  # Ajouter les métadonnées sur le mode
             )
-            st.session_state.last_interaction_id = interaction_id  # Garde l'ID pour le feedback
+            st.session_state.last_interaction_id = (
+                interaction_id  # Garde l'ID pour le feedback
+            )
             logging.info(f"Interaction enregistrée avec ID: {interaction_id}")
 
             # Ajouter la réponse de l'assistant à l'historique pour affichage permanent
@@ -519,7 +571,11 @@ if current_interaction_id:
 
         # 1 pour positif, 0 pour négatif
         feedback_value = (
-            1 if feedback_score == "positive" else 0 if feedback_score == "negative" else None
+            1
+            if feedback_score == "positive"
+            else 0
+            if feedback_score == "negative"
+            else None
         )
 
         # Texte pour la base de données ("positif" ou "négatif")
@@ -542,7 +598,9 @@ if current_interaction_id:
         comment = feedback.get("text", None)
 
         # Mettre à jour l'interaction dans la base de données
-        success = update_feedback(current_interaction_id, feedback_text, comment, feedback_value)
+        success = update_feedback(
+            current_interaction_id, feedback_text, comment, feedback_value
+        )
         if success:
             st.toast(f"Merci pour votre retour ({feedback_emoji}) !", icon="✅")
             # Optionnel: Désactiver les boutons après le premier clic pour éviter les soumissions multiples

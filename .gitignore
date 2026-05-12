@@ -8,10 +8,11 @@ wheels/
 
 # Virtual environments
 .venv
-
 .env
 .pytest_cache
 .ruff_cache
+.DS_Store
+
 data/openagenda*
 data/eval_report.json
 database

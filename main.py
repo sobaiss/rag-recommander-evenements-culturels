@@ -1,23 +1,24 @@
+import datetime
 import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, status
-from mistralai.client import Mistral
 from pydantic import BaseModel, Field
 
-from utils.config import (
-    CHUNK_OVERLAP,
-    CHUNK_SIZE,
-    EMBEDDING_MODEL,
-    MISTRAL_API_KEY,
+from utils.config import EMBEDDING_MODEL
+from utils.container import AppContainer, build_container
+from utils.load_data import (
+    build_openagenda_url,
+    load_documents_from_url_paginated,
+    save_documents_to_json,
 )
-from utils.load_data import build_openagenda_url, load_documents_from_url_paginated, save_documents_to_json
-from utils.query_classifier import QueryClassifier
 from utils.rag_pipeline import RAGPipeline
 from utils.vector_store import VectorStoreManager
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # État partagé de l'application (chargé une fois au démarrage)
@@ -25,12 +26,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 _state: dict = {}
 
 
+def _get_container() -> AppContainer:
+    container: AppContainer | None = _state.get("container")
+    if container is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service non initialisé.",
+        )
+    return container
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.info("Démarrage de l'API — chargement des ressources...")
-    _state["vector_store"] = VectorStoreManager()
-    _state["mistral_client"] = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
-    _state["query_classifier"] = QueryClassifier()
+    _state["container"] = build_container()
     logging.info("Ressources chargées.")
     yield
     _state.clear()
@@ -50,6 +59,7 @@ API REST pour le système RAG de recommandation d'événements culturels **Puls-
 |---------|--------|-------------|
 | `POST` | `/ask` | Pose une question au système RAG |
 | `POST` | `/rebuild` | Reconstruit la base vectorielle FAISS |
+| `GET` | `/metadata` | Métadonnées de l'index vectoriel |
 | `GET` | `/health` | État de santé de l'API |
 
 ## Flux RAG
@@ -74,8 +84,15 @@ class AskRequest(BaseModel):
         description="La question posée par l'utilisateur.",
         examples=["Quels concerts sont prévus à Paris ce mois-ci ?"],
     )
-    k: int = Field(5, ge=1, le=20, description="Nombre de documents à récupérer depuis l'index FAISS.")
-    min_score: float = Field(0.75, ge=0.0, le=1.0, description="Score de similarité minimum (entre 0 et 1).")
+    k: int = Field(
+        5,
+        ge=1,
+        le=20,
+        description="Nombre de documents à récupérer depuis l'index FAISS.",
+    )
+    min_score: float = Field(
+        0.5, ge=0.0, le=1.0, description="Score de similarité minimum (entre 0 et 1)."
+    )
     model: str = Field(
         "mistral-large-latest",
         description="Identifiant du modèle Mistral.",
@@ -86,13 +103,19 @@ class AskRequest(BaseModel):
 class SourceModel(BaseModel):
     text: str = Field(..., description="Extrait du document source.")
     score: float = Field(..., description="Score de similarité en pourcentage (0–100).")
-    metadata: dict = Field(..., description="Métadonnées du document (url, ville, dates, prix…).")
+    metadata: dict = Field(
+        ..., description="Métadonnées du document (url, ville, dates, prix…)."
+    )
 
 
 class AskResponse(BaseModel):
     answer: str = Field(..., description="Réponse générée par le modèle Mistral.")
-    mode: str = Field(..., description="Mode de traitement utilisé : `RAG` ou `DIRECT`.")
-    confidence: float = Field(..., description="Indice de confiance de la classification (0–1).")
+    mode: str = Field(
+        ..., description="Mode de traitement utilisé : `RAG` ou `DIRECT`."
+    )
+    confidence: float = Field(
+        ..., description="Indice de confiance de la classification (0–1)."
+    )
     reason: str = Field(..., description="Explication de la classification.")
     sources: list[SourceModel] = Field(
         default=[],
@@ -103,7 +126,7 @@ class AskResponse(BaseModel):
 
 class RebuildRequest(BaseModel):
     cities: list[str] = Field(
-        default=[],
+        default=["Paris"],
         description="Liste de villes à filtrer (vide = toute la France).",
         examples=[["Paris", "Lyon"]],
     )
@@ -112,19 +135,38 @@ class RebuildRequest(BaseModel):
         description="Date de début des événements au format `YYYY-MM-DD`. Seuls le mois et l'année sont utilisés.",
         examples=["2025-01-01"],
     )
-    embedding_model: str = Field(EMBEDDING_MODEL, description="Modèle d'embedding à utiliser.")
-    chunk_size: int = Field(CHUNK_SIZE, ge=100, le=10000, description="Taille des chunks en caractères.")
-    chunk_overlap: int = Field(CHUNK_OVERLAP, ge=0, le=2000, description="Chevauchement des chunks en caractères.")
-    max_records: int = Field(120, ge=20, le=500, description="Nombre maximum d'événements à récupérer depuis l'API.")
+    embedding_model: str = Field(
+        EMBEDDING_MODEL, description="Modèle d'embedding à utiliser."
+    )
+    max_records: int = Field(
+        120,
+        ge=20,
+        le=1000,
+        description="Nombre maximum d'événements à récupérer depuis l'API.",
+    )
 
 
 class RebuildResponse(BaseModel):
     status: str = Field(..., description="Résultat de l'opération : `success`.")
     message: str = Field(..., description="Message descriptif du résultat.")
     num_documents: int = Field(..., description="Nombre de documents indexés.")
-    num_chunks: int = Field(..., description="Nombre de chunks créés.")
     embedding_model: str = Field(..., description="Modèle d'embedding utilisé.")
-    data_file: str = Field(..., description="Chemin du fichier de données sauvegardé dans `data/`.")
+    data_file: str = Field(
+        ..., description="Chemin du fichier de données sauvegardé dans `data/`."
+    )
+
+
+class MetadataResponse(BaseModel):
+    embedding_model: str = Field(
+        ..., description="Modèle d'embedding utilisé pour l'index."
+    )
+    created_at: str = Field(
+        ..., description="Date et heure de création de l'index (ISO 8601)."
+    )
+    num_documents: int = Field(..., description="Nombre de documents indexés.")
+    cities: list[str] = Field(
+        default=[], description="Liste des villes couvertes par l'index."
+    )
 
 
 class HealthResponse(BaseModel):
@@ -146,14 +188,39 @@ class HealthResponse(BaseModel):
 )
 def health() -> HealthResponse:
     """Retourne l'état de l'API, le nombre de vecteurs indexés et les métadonnées de l'index."""
-    vector_store: VectorStoreManager | None = _state.get("vector_store")
+    container: AppContainer | None = _state.get("container")
+    vector_store = container.vector_store if container else None
     meta = vector_store.get_metadata() if vector_store else None
     return HealthResponse(
         status="ok",
         index_loaded=vector_store is not None and vector_store.index is not None,
         num_vectors=vector_store.index.ntotal if vector_store and vector_store.index else 0,
         index_metadata=meta,
-        mistral_configured=_state.get("mistral_client") is not None,
+        mistral_configured=container is not None and container.mistral_client is not None,
+    )
+
+
+@app.get(
+    "/metadata",
+    response_model=MetadataResponse,
+    summary="Métadonnées de l'index vectoriel",
+    tags=["Système"],
+)
+def get_metadata() -> MetadataResponse:
+    """Retourne les métadonnées de l'index FAISS actuel (modèle, date de création, villes couvertes)."""
+    container: AppContainer | None = _state.get("container")
+    vector_store = container.vector_store if container else None
+    meta = vector_store.get_metadata() if vector_store else None
+    if not meta:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Aucun index trouvé. Lancez d'abord une indexation via POST /rebuild.",
+        )
+    return MetadataResponse(
+        embedding_model=meta.get("embedding_model", ""),
+        created_at=meta.get("created_at", ""),
+        num_documents=meta.get("num_documents", 0),
+        cities=meta.get("cities", []),
     )
 
 
@@ -174,18 +241,15 @@ def ask(request: AskRequest) -> AskResponse:
     3. Appel à **Mistral** avec le prompt système + contexte des documents.
     4. Retour de la réponse, des sources et des métadonnées de classification.
     """
-    mistral_client: Mistral | None = _state.get("mistral_client")
-    vector_store: VectorStoreManager = _state.get("vector_store")
-    query_classifier: QueryClassifier = _state.get("query_classifier")
-
-    if not mistral_client:
+    container = _get_container()
+    if not container.mistral_client:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="La clé API Mistral (MISTRAL_API_KEY) n'est pas configurée.",
         )
 
     try:
-        result = RAGPipeline(query_classifier, vector_store, mistral_client).run(
+        result = RAGPipeline(container.query_classifier, container.vector_store, container.mistral_client).run(
             question=request.question,
             k=request.k,
             min_score=request.min_score,
@@ -221,29 +285,28 @@ def rebuild(request: RebuildRequest) -> RebuildResponse:
 
     **Étapes exécutées :**
 
-    1. Validation des paramètres (chunk_overlap < chunk_size).
-    2. Construction de l'URL OpenAgenda avec les filtres ville / date fournis.
-    3. Récupération des événements avec **pagination automatique**.
-    4. Sauvegarde des données brutes dans `data/`.
-    5. Suppression de l'ancien index FAISS.
-    6. Génération des embeddings et construction du nouvel index.
-    7. Mise à jour de l'instance `VectorStoreManager` en mémoire.
+    1. Construction de l'URL OpenAgenda avec les filtres ville / date fournis.
+    2. Récupération des événements avec **pagination automatique**.
+    3. Suppression de l'ancien index FAISS.
+    4. Génération des embeddings et construction du nouvel index.
+    5. Sauvegarde des données brutes dans `data/`.
+    6. Mise à jour de l'instance `VectorStoreManager` en mémoire.
 
     ⚠️ Cette opération peut prendre plusieurs minutes selon le nombre d'événements et le modèle d'embedding choisi.
     """
-    if request.chunk_overlap >= request.chunk_size:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="chunk_overlap doit être strictement inférieur à chunk_size.",
-        )
-
     # 1. Construction de l'URL
-    url = build_openagenda_url(request.cities, request.begin_date)
+    begin_date = request.begin_date or (
+        datetime.date.today().replace(year=datetime.date.today().year - 1).isoformat()
+    )
+    url = build_openagenda_url(request.cities, begin_date)
+    logging.info(f"/rebuild — begin_date effectif: {begin_date}")
     logging.info(f"/rebuild — URL: {url[:120]}...")
 
     # 2. Récupération des données
     try:
-        documents = load_documents_from_url_paginated(url, max_records=request.max_records)
+        documents = load_documents_from_url_paginated(
+            url, max_records=request.max_records
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -256,22 +319,13 @@ def rebuild(request: RebuildRequest) -> RebuildResponse:
             detail="Aucun événement trouvé pour les critères fournis. Essayez d'autres filtres.",
         )
 
-    # 3. Sauvegarde dans data/
-    data_file = save_documents_to_json(documents)
-    logging.info(f"Données sauvegardées : {data_file}")
+    # 3. Suppression de l'ancien index
+    container = _get_container()
+    container.vector_store.clear_index()
 
-    # 4. Suppression de l'ancien index
-    existing_store: VectorStoreManager | None = _state.get("vector_store")
-    if existing_store:
-        existing_store.clear_index()
-
-    # 5. Construction du nouvel index
+    # 4. Construction du nouvel index
     try:
-        new_store = VectorStoreManager(
-            embedding_model=request.embedding_model,
-            chunk_size=request.chunk_size,
-            chunk_overlap=request.chunk_overlap,
-        )
+        new_store = VectorStoreManager(embedding_model=request.embedding_model)
         new_store.build_index(documents)
     except Exception as exc:
         logging.error(f"Erreur lors de la construction de l'index : {exc}")
@@ -280,17 +334,20 @@ def rebuild(request: RebuildRequest) -> RebuildResponse:
             detail=f"Erreur lors de la construction de l'index FAISS : {exc}",
         )
 
+    # 5. Sauvegarde dans data/
+    data_file = save_documents_to_json(documents)
+    logging.info(f"Données sauvegardées : {data_file}")
+
     # 6. Mise à jour de l'état partagé
-    _state["vector_store"] = new_store
+    container.vector_store = new_store
 
     meta = new_store.get_metadata() or {}
-    logging.info(f"/rebuild — succès : {meta.get('num_documents')} docs, {meta.get('num_chunks')} chunks")
+    logging.info(f"/rebuild — succès : {meta.get('num_documents')} docs")
 
     return RebuildResponse(
         status="success",
         message=f"{len(documents)} événements indexés avec succès.",
         num_documents=meta.get("num_documents", len(documents)),
-        num_chunks=meta.get("num_chunks", 0),
         embedding_model=request.embedding_model,
         data_file=data_file,
     )

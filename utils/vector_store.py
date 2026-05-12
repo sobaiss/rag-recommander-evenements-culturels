@@ -20,9 +20,7 @@ from langchain_core.documents import Document
 from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 
 from utils.config import (
-    CHAT_MODEL,
     EMBEDDING_MODEL,
-    MISTRAL_API_KEY,
     VECTOR_DB_DIR,
 )
 
@@ -93,9 +91,17 @@ METADATA_FIELD_INFO = [
 ]
 
 
+class MetadataModel:
+    embedding_model: str
+    created_at: str
+    num_documents: int
+    cities: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Custom FAISS translator (callable filter — supporte tous les opérateurs)
 # ---------------------------------------------------------------------------
+
 
 class FaissCallableTranslator(Visitor):
     """Traduit un StructuredQuery en callable Python pour le filtre FAISS.
@@ -125,7 +131,9 @@ class FaissCallableTranslator(Visitor):
         def _normalize(v: Any) -> str:
             """Normalise les valeurs pour la comparaison (gère bool, str, int, dict date)."""
             if isinstance(v, dict):
-                return v.get("date", str(v))  # {'date': '2026-05-01', 'type': 'date'} → '2026-05-01'
+                return v.get(
+                    "date", str(v)
+                )  # {'date': '2026-05-01', 'type': 'date'} → '2026-05-01'
             if isinstance(v, bool):
                 return str(v).lower()  # True→"true", False→"false"
             if isinstance(v, str) and v.lower() in ("true", "false"):
@@ -178,6 +186,7 @@ class FaissCallableTranslator(Visitor):
 # VectorStoreManager
 # ---------------------------------------------------------------------------
 
+
 class VectorStoreManager:
     """Gère la création, le chargement et la recherche dans un index FAISS LangChain.
 
@@ -187,7 +196,7 @@ class VectorStoreManager:
 
     def __init__(
         self,
-        embedding_model: str = None,
+        embedding_model: str | None = None,
         vector_db_dir: str = VECTOR_DB_DIR,
     ):
         self._vector_db_dir = vector_db_dir
@@ -209,7 +218,7 @@ class VectorStoreManager:
     # Metadata
     # ------------------------------------------------------------------
 
-    def _read_metadata(self) -> dict | None:
+    def _read_metadata(self) -> dict[str, Any] | None:
         if os.path.exists(self._index_metadata_file):
             try:
                 with open(self._index_metadata_file, "r", encoding="utf-8") as f:
@@ -218,10 +227,12 @@ class VectorStoreManager:
                 return None
         return None
 
-    def get_metadata(self) -> dict | None:
+    def get_metadata(self) -> dict[str, Any] | None:
         return self._read_metadata()
 
-    def _save_metadata(self, num_documents: int, cities: list[str] | None = None) -> None:
+    def _save_metadata(
+        self, num_documents: int, cities: list[str] | None = None
+    ) -> None:
         os.makedirs(os.path.dirname(self._index_metadata_file), exist_ok=True)
         meta = {
             "embedding_model": self.embedding_model,
@@ -249,13 +260,11 @@ class VectorStoreManager:
                     "Exécutez: uv add sentence-transformers"
                 ) from exc
             return HuggingFaceEmbeddings(model_name=self.embedding_model)
-        return MistralAIEmbeddings(model=self.embedding_model, api_key=MISTRAL_API_KEY)
+        return MistralAIEmbeddings(model=self.embedding_model)
 
     def _get_llm(self) -> ChatMistralAI:
         if self._llm is None:
-            self._llm = ChatMistralAI(
-                model=CHAT_MODEL, api_key=MISTRAL_API_KEY, temperature=0
-            )
+            self._llm = ChatMistralAI(temperature=0)
         return self._llm
 
     # ------------------------------------------------------------------
@@ -266,14 +275,18 @@ class VectorStoreManager:
         index_path = os.path.join(self._vector_db_dir, "index.faiss")
         if os.path.exists(index_path):
             try:
-                logging.info(f"Chargement de l'index LangChain FAISS depuis {self._vector_db_dir}.")
+                logging.info(
+                    f"Chargement de l'index LangChain FAISS depuis {self._vector_db_dir}."
+                )
                 embeddings = self._get_langchain_embeddings()
                 self._faiss_store = LangchainFAISS.load_local(
                     self._vector_db_dir,
                     embeddings,
                     allow_dangerous_deserialization=True,
                 )
-                logging.info(f"Index chargé ({self._faiss_store.index.ntotal} vecteurs).")
+                logging.info(
+                    f"Index chargé ({self._faiss_store.index.ntotal} vecteurs)."
+                )
             except Exception as e:
                 logging.error(f"Erreur lors du chargement de l'index FAISS: {e}")
                 self._faiss_store = None
@@ -288,7 +301,7 @@ class VectorStoreManager:
     def build_index(
         self,
         documents: list[Document],
-        progress_callback: Callable[[str], None] = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         """Construit l'index FAISS LangChain à partir des documents."""
 
@@ -301,7 +314,9 @@ class VectorStoreManager:
             logging.warning("Aucun document fourni pour la construction de l'index.")
             return
 
-        _progress(f"Génération des embeddings pour {len(documents)} documents (modèle: {self.embedding_model})...")
+        _progress(
+            f"Génération des embeddings pour {len(documents)} documents (modèle: {self.embedding_model})..."
+        )
         embeddings = self._get_langchain_embeddings()
 
         _progress("Construction de l'index FAISS...")
@@ -310,7 +325,13 @@ class VectorStoreManager:
         _progress("Sauvegarde de l'index sur le disque...")
         os.makedirs(self._vector_db_dir, exist_ok=True)
         self._faiss_store.save_local(self._vector_db_dir)
-        cities = sorted({doc.metadata.get("city", "") for doc in documents if doc.metadata.get("city")})
+        cities = sorted(
+            {
+                doc.metadata.get("city", "")
+                for doc in documents
+                if doc.metadata.get("city")
+            }
+        )
         self._save_metadata(num_documents=len(documents), cities=cities)
         _progress(f"Index sauvegardé — {len(documents)} documents indexés.")
 
@@ -322,7 +343,7 @@ class VectorStoreManager:
         self,
         query_text: str,
         k: int = 5,
-        min_score: float = None,
+        min_score: float | None = None,
     ) -> list[dict]:
         """Recherche avec SelfQueryRetriever : filtres structurés + similarité cosinus.
 
@@ -353,7 +374,9 @@ class VectorStoreManager:
             if _TEMPORAL_RE.search(query_text):
                 today = datetime.date.today()
                 first_day = today.replace(day=1)
-                last_day = (today.replace(day=28) + datetime.timedelta(days=4)).replace(day=1) - datetime.timedelta(days=1)
+                last_day = (today.replace(day=28) + datetime.timedelta(days=4)).replace(
+                    day=1
+                ) - datetime.timedelta(days=1)
                 date_ctx = (
                     f"[Date du jour: {today.isoformat()}. Règles de filtrage selon l'expression temporelle: "
                     f"'à venir' / 'prochains' → end_date >= '{today.isoformat()}'; "
@@ -363,19 +386,28 @@ class VectorStoreManager:
                     f"Un événement commencé avant la période peut encore être actif si end_date est dans la période.]"
                 )
                 constructor_query = f"{query_text} {date_ctx}"
-            structured_query = retriever.query_constructor.invoke({"query": constructor_query})
-            semantic_query, search_kwargs = retriever._prepare_query(query_text, structured_query)
-            logging.info(f"----- semantic query: {semantic_query}")
+            structured_query = retriever.query_constructor.invoke(
+                {"query": constructor_query}
+            )
+            semantic_query, search_kwargs = retriever._prepare_query(
+                query_text, structured_query
+            )
+            logging.debug(f"semantic query: {semantic_query}")
+
             if not semantic_query or not semantic_query.strip():
                 meta = self._read_metadata()
                 cities = meta.get("cities", []) if meta else []
-                semantic_query = "événements " + " ".join(cities) if cities else query_text
+                semantic_query = (
+                    "événements " + " ".join(cities) if cities else query_text
+                )
             logging.info(
                 f"SelfQueryRetriever — requête sémantique: {semantic_query!r} | "
                 f"filtre LLM: {structured_query.filter!r}"
             )
         except Exception as e:
-            logging.warning(f"SelfQueryRetriever parsing échoué, fallback sémantique : {e}")
+            logging.warning(
+                f"SelfQueryRetriever parsing échoué, fallback sémantique : {e}"
+            )
 
         # --- Recherche vectorielle avec scores ---
         faiss_filter = search_kwargs.get("filter")
@@ -388,18 +420,31 @@ class VectorStoreManager:
         # Avec un filtre actif, on force fetch_k=total_docs pour évaluer tous les documents.
         effective_fetch_k = total_docs if faiss_filter is not None else fetch_k
         try:
-            docs_with_scores = self._faiss_store.similarity_search_with_relevance_scores(
-                semantic_query, k=effective_fetch_k, filter=faiss_filter, fetch_k=effective_fetch_k
+            docs_with_scores = (
+                self._faiss_store.similarity_search_with_relevance_scores(
+                    semantic_query,
+                    k=effective_fetch_k,
+                    filter=faiss_filter,
+                    fetch_k=effective_fetch_k,
+                )
             )
             if not docs_with_scores and faiss_filter is not None:
-                logging.warning("Filtre structuré sans résultat, fallback recherche sémantique pure.")
-                docs_with_scores = self._faiss_store.similarity_search_with_relevance_scores(
-                    semantic_query, k=fetch_k
+                logging.warning(
+                    "Filtre structuré sans résultat, fallback recherche sémantique pure."
+                )
+                docs_with_scores = (
+                    self._faiss_store.similarity_search_with_relevance_scores(
+                        semantic_query, k=fetch_k
+                    )
                 )
         except Exception as e:
-            logging.warning(f"Recherche avec filtre échouée, fallback sans filtre : {e}")
-            docs_with_scores = self._faiss_store.similarity_search_with_relevance_scores(
-                query_text, k=fetch_k
+            logging.warning(
+                f"Recherche avec filtre échouée, fallback sans filtre : {e}"
+            )
+            docs_with_scores = (
+                self._faiss_store.similarity_search_with_relevance_scores(
+                    query_text, k=fetch_k
+                )
             )
 
         # --- Filtrage par min_score et formatage ---

@@ -4,8 +4,8 @@ Tests fonctionnels de l'API RAG Puls-Events.
 Les dépendances externes (Mistral API, FAISS, OpenAgenda) sont mockées
 pour que les tests s'exécutent sans clé API ni index réel.
 
-Stratégie d'isolation : après démarrage du lifespan, on écrase directement
-`main._state` avec des mocks pour éviter tout appel réseau.
+Stratégie d'isolation : build_container() est patché avant le démarrage
+du lifespan pour injecter un AppContainer entièrement mocké dans _state.
 """
 
 from unittest.mock import MagicMock, patch
@@ -26,8 +26,6 @@ def make_vector_store(search_results=None):
     store.index.ntotal = 42
     store.get_metadata.return_value = {
         "embedding_model": "mistral-embed",
-        "chunk_size": 2000,
-        "chunk_overlap": 200,
         "num_documents": 10,
         "num_chunks": 42,
         "created_at": "2025-05-01T10:00:00",
@@ -60,20 +58,28 @@ def make_classifier(needs_rag=True, confidence=0.9, reason="Mots-clés événeme
     return classifier
 
 
+def make_container(needs_rag=True, search_results=None, answer="Concert Jazz à Paris le 15 mai 2026."):
+    container = MagicMock()
+    container.vector_store = make_vector_store(search_results)
+    container.mistral_client = make_mistral_client(answer)
+    container.query_classifier = make_classifier(needs_rag)
+    return container
+
+
 # ──────────────────────────────────────────────────────────────────────────────
-# Fixture principale : client HTTP avec mocks injectés dans _state
+# Fixture principale : client HTTP avec container mocké injecté via lifespan
 # ──────────────────────────────────────────────────────────────────────────────
 @pytest.fixture
 async def http_client():
     """
     Client HTTP branché sur l'app FastAPI.
-    Injecte les mocks directement dans main._state après le démarrage
-    du lifespan, évitant tout appel réseau ou lecture de fichiers.
+    ASGITransport ne déclenche pas le lifespan : on injecte directement un
+    AppContainer mocké dans _state pour simuler l'initialisation.
     """
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        _main._state["vector_store"] = make_vector_store()
-        _main._state["mistral_client"] = make_mistral_client()
-        _main._state["query_classifier"] = make_classifier()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        _main._state["container"] = make_container()
         yield ac
     _main._state.clear()
 
@@ -98,7 +104,9 @@ async def test_health_ok(http_client):
 # Tests POST /ask — mode RAG
 # ──────────────────────────────────────────────────────────────────────────────
 async def test_ask_rag_returns_answer_and_sources(http_client):
-    response = await http_client.post("/ask", json={"question": "Quels concerts à Paris ?"})
+    response = await http_client.post(
+        "/ask", json={"question": "Quels concerts à Paris ?"}
+    )
 
     assert response.status_code == 200
     data = response.json()
@@ -113,11 +121,14 @@ async def test_ask_rag_returns_answer_and_sources(http_client):
 
 async def test_ask_rag_custom_model(http_client):
     mock_mistral = make_mistral_client()
-    _main._state["mistral_client"] = mock_mistral
+    _main._state["container"].mistral_client = mock_mistral
 
     response = await http_client.post(
         "/ask",
-        json={"question": "Événements gratuits à Lyon ?", "model": "mistral-large-latest"},
+        json={
+            "question": "Événements gratuits à Lyon ?",
+            "model": "mistral-large-latest",
+        },
     )
 
     assert response.status_code == 200
@@ -128,7 +139,7 @@ async def test_ask_rag_custom_model(http_client):
 
 async def test_ask_rag_custom_k_and_min_score(http_client):
     mock_store = make_vector_store()
-    _main._state["vector_store"] = mock_store
+    _main._state["container"].vector_store = mock_store
 
     await http_client.post(
         "/ask",
@@ -144,9 +155,11 @@ async def test_ask_rag_custom_k_and_min_score(http_client):
 # Tests POST /ask — mode DIRECT
 # ──────────────────────────────────────────────────────────────────────────────
 async def test_ask_direct_no_sources(http_client):
-    _main._state["query_classifier"] = make_classifier(needs_rag=False, confidence=0.95, reason="Salutation")
+    _main._state["container"].query_classifier = make_classifier(
+        needs_rag=False, confidence=0.95, reason="Salutation"
+    )
     mock_store = make_vector_store()
-    _main._state["vector_store"] = mock_store
+    _main._state["container"].vector_store = mock_store
 
     response = await http_client.post("/ask", json={"question": "Bonjour !"})
 
@@ -171,12 +184,16 @@ async def test_ask_missing_question_rejected(http_client):
 
 
 async def test_ask_k_out_of_range_rejected(http_client):
-    assert (await http_client.post("/ask", json={"question": "Test", "k": 0})).status_code == 422
-    assert (await http_client.post("/ask", json={"question": "Test", "k": 21})).status_code == 422
+    assert (
+        await http_client.post("/ask", json={"question": "Test", "k": 0})
+    ).status_code == 422
+    assert (
+        await http_client.post("/ask", json={"question": "Test", "k": 21})
+    ).status_code == 422
 
 
 async def test_ask_no_mistral_key_returns_503(http_client):
-    _main._state["mistral_client"] = None
+    _main._state["container"].mistral_client = None
 
     response = await http_client.post("/ask", json={"question": "Test"})
 
@@ -187,7 +204,7 @@ async def test_ask_no_mistral_key_returns_503(http_client):
 async def test_ask_mistral_api_error_returns_502(http_client):
     mock_mistral = make_mistral_client()
     mock_mistral.chat.complete.side_effect = RuntimeError("API timeout")
-    _main._state["mistral_client"] = mock_mistral
+    _main._state["container"].mistral_client = mock_mistral
 
     response = await http_client.post("/ask", json={"question": "Concerts ?"})
 
@@ -198,14 +215,6 @@ async def test_ask_mistral_api_error_returns_502(http_client):
 # ──────────────────────────────────────────────────────────────────────────────
 # Tests POST /rebuild — validation
 # ──────────────────────────────────────────────────────────────────────────────
-async def test_rebuild_chunk_overlap_gte_chunk_size_rejected(http_client):
-    response = await http_client.post(
-        "/rebuild", json={"chunk_size": 500, "chunk_overlap": 500}
-    )
-    assert response.status_code == 422
-    assert "chunk_overlap" in response.json()["detail"]
-
-
 async def test_rebuild_no_events_returns_404(http_client):
     with patch("main.load_documents_from_url_paginated", return_value=[]):
         response = await http_client.post(
@@ -215,7 +224,9 @@ async def test_rebuild_no_events_returns_404(http_client):
 
 
 async def test_rebuild_openagenda_network_error_returns_502(http_client):
-    with patch("main.load_documents_from_url_paginated", side_effect=ConnectionError("timeout")):
+    with patch(
+        "main.load_documents_from_url_paginated", side_effect=ConnectionError("timeout")
+    ):
         response = await http_client.post("/rebuild", json={})
     assert response.status_code == 502
 
@@ -237,7 +248,9 @@ async def test_rebuild_success(http_client):
 
     with (
         patch("main.load_documents_from_url_paginated", return_value=[mock_doc]),
-        patch("main.save_documents_to_json", return_value="data/openagenda_20260506.json"),
+        patch(
+            "main.save_documents_to_json", return_value="data/openagenda_20260506.json"
+        ),
         patch("main.VectorStoreManager", return_value=mock_new_store),
     ):
         response = await http_client.post(
@@ -249,17 +262,19 @@ async def test_rebuild_success(http_client):
     data = response.json()
     assert data["status"] == "success"
     assert data["num_documents"] == 1
-    assert data["num_chunks"] == 3
     assert data["embedding_model"] == "mistral-embed"
     assert "data/" in data["data_file"]
-    # Vérifie que le vecteur store en mémoire a été mis à jour
-    assert _main._state["vector_store"] is mock_new_store
+    assert _main._state["container"].vector_store is mock_new_store
 
 
 async def test_rebuild_updates_in_memory_vector_store(http_client):
     """Après /rebuild, les requêtes /ask utilisent le nouvel index."""
     mock_new_store = MagicMock()
-    mock_new_store.get_metadata.return_value = {"num_documents": 5, "num_chunks": 15, "embedding_model": "mistral-embed"}
+    mock_new_store.get_metadata.return_value = {
+        "num_documents": 5,
+        "num_chunks": 15,
+        "embedding_model": "mistral-embed",
+    }
     mock_new_store.search.return_value = []
 
     mock_doc = MagicMock()
@@ -273,8 +288,7 @@ async def test_rebuild_updates_in_memory_vector_store(http_client):
     ):
         await http_client.post("/rebuild", json={})
 
-    # Le vecteur store en mémoire est maintenant le nouveau
-    assert _main._state["vector_store"] is mock_new_store
+    assert _main._state["container"].vector_store is mock_new_store
 
 
 # ──────────────────────────────────────────────────────────────────────────────

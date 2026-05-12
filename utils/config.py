@@ -2,24 +2,24 @@ import os
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 if not MISTRAL_API_KEY:
-    print("⚠️ La variable d'environnement MISTRAL_API_KEY n'est pas définie dans le fichier .env.")
+    print(
+        "⚠️ La variable d'environnement MISTRAL_API_KEY n'est pas définie dans le fichier .env."
+    )
 
-INPUT_DIR = "data"                # Dossier pour les données sources après extraction
+INPUT_DIR = "data"  # Dossier pour les données sources après extraction
 
-VECTOR_DB_DIR = "vector_db"         # Dossier pour stocker l'index Faiss et les chunks
+VECTOR_DB_DIR = "vector_db"  # Dossier pour stocker l'index Faiss et les chunks
 FAISS_INDEX_FILE = os.path.join(VECTOR_DB_DIR, "faiss_index.idx")
 DOCUMENT_CHUNKS_FILE = os.path.join(VECTOR_DB_DIR, "document_chunks.pkl")
 INDEX_METADATA_FILE = os.path.join(VECTOR_DB_DIR, "index_metadata.json")
 
-CHUNK_SIZE = 2000                   # Taille des chunks en *caractères* (vise ~512 tokens)
-CHUNK_OVERLAP = 200                 # Chevauchement en *caractères*
 EMBEDDING_BATCH_SIZE = 32  # Taille des lots pour l'API d'embedding
 
 # --- Modèles Mistral ---
 EMBEDDING_MODEL = "mistral-embed"
-CHAT_MODEL = "mistral-small-latest"  # Ou un autre modèle comme mistral-large-latest
+CHAT_MODEL = "mistral-large-latest"  # Ou un autre modèle comme mistral-large-latest
 
-MODEL_NAME = "mistral-small-latest"  # Ou un autre modèle comme mistral-large-latest
+MODEL_NAME = "mistral-large-latest"  # Ou un autre modèle comme mistral-large-latest
 
 # --- Modèles d'embedding disponibles (libres et gratuits) ---
 AVAILABLE_EMBEDDING_MODELS = {
@@ -245,4 +245,3 @@ FRENCH_CITIES = [
     "Livarot-Pays-d'Auge",
     "Saint-Pierre-en-Auge",
 ]
-
