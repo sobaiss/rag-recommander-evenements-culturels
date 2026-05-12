@@ -3,7 +3,6 @@ import logging
 from dataclasses import dataclass, field
 
 from utils.prompts import rag_no_results_system_prompt, rag_system_prompt
-from utils.query_utils import expand_temporal_query
 
 NO_RESULTS_ANSWER = (
     "Je n'ai trouvé aucun événement correspondant à votre recherche dans la base indexée.\n\n"
@@ -52,10 +51,7 @@ class RAGPipeline:
         # 2. Recherche vectorielle (mode RAG uniquement)
         sources: list[dict] = []
         if needs_rag:
-            search_query = expand_temporal_query(question, today=datetime.date.today())
-            if search_query != question:
-                logging.info(f"Requête augmentée : {search_query!r}")
-            retrieved = self.vector_store.search(search_query, k=k, min_score=min_score)
+            retrieved = self.vector_store.search(question, k=k, min_score=min_score)
             sources = [
                 {"text": doc["text"], "score": doc["score"], "metadata": doc["metadata"]}
                 for doc in retrieved

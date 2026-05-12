@@ -30,8 +30,8 @@ def extract_metadata(record: dict) -> dict:
     metadata["start_date"] = str(record.get("firstdate_begin", ""))[:10]
     metadata["end_date"] = str(record.get("lastdate_begin"))[:10]
     metadata["price"] = record.get("conditions_fr")
-    metadata["status"] = record.get("status")
-    metadata["keywords"] = ", ".join(record.get("keywords_fr", []))
+    keywords = record.get("keywords_fr", "")
+    metadata["keywords"] = ", ".join(keywords) if isinstance(keywords, list) else keywords
     # Nettoyage optionnel du prix pour un filtrage futur
     conditions = str(record.get("conditions_fr", "")).lower()
     metadata["is_free"] = "tarif" not in conditions

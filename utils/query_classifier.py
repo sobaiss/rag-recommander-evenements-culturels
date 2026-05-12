@@ -24,7 +24,8 @@ class QueryClassifier:
         # Mots-clés qui suggèrent un besoin de RAG
         self.events_company_keywords = [
             COMPANY_NAME.lower(),
-            "événement",
+            "évènement",
+            "evenement",
             "festival",
             "concert",
             "exposition",
@@ -70,11 +71,11 @@ class QueryClassifier:
         events_keywords_found = [kw for kw in self.events_company_keywords if kw in query_lower]
         if events_keywords_found:
             keywords_str = ", ".join(events_keywords_found)
-            return True, 0.9, f"Contient des mots-clés liés aux évnènements: {keywords_str}"
+            return True, 0.9, f"Contient des mots-clés liés aux évènements: {keywords_str}"
 
         # 3. Utiliser le LLM pour les cas ambigus
-        if self.mistral_client:
-            return self._classify_with_llm(query)
+        # if self.mistral_client:
+        #     return self._classify_with_llm(query)
 
         # Par défaut, utiliser RAG pour les questions longues (plus de 5 mots)
         words = query.split()

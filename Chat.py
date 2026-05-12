@@ -125,7 +125,7 @@ with st.sidebar:
         "Nombre de documents à récupérer",
         min_value=1,
         max_value=20,
-        value=5,  # 5 par défaut
+        value=5,  # 10 par défaut
         step=1,
     )
 
@@ -134,7 +134,7 @@ with st.sidebar:
         "Score minimum (filtrer les résultats faibles)",
         min_value=0,
         max_value=100,
-        value=75,  # 75% par défaut
+        value=50,  # 50% par défaut
         step=5,
         format="%d%%",
     )

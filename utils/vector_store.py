@@ -2,27 +2,187 @@ import datetime
 import json
 import logging
 import os
-import pickle
-from typing import Callable
+import re
+from typing import Any, Callable
 
-import faiss
-import numpy as np
+from langchain_classic.chains.query_constructor.ir import (
+    Comparator,
+    Comparison,
+    Operation,
+    Operator,
+    StructuredQuery,
+    Visitor,
+)
+from langchain_classic.chains.query_constructor.schema import AttributeInfo
+from langchain_classic.retrievers.self_query.base import SelfQueryRetriever
+from langchain_community.vectorstores import FAISS as LangchainFAISS
 from langchain_core.documents import Document
-from mistralai.client import Mistral
+from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 
 from utils.config import (
-    EMBEDDING_BATCH_SIZE,
+    CHAT_MODEL,
     EMBEDDING_MODEL,
     MISTRAL_API_KEY,
     VECTOR_DB_DIR,
 )
 
+# ---------------------------------------------------------------------------
+# Détection des expressions temporelles (pour injection de contexte date)
+# ---------------------------------------------------------------------------
+
+_TEMPORAL_RE = re.compile(
+    r"\bce\s+mois\b|\baujourd['\s]?hui\b|\bdemain\b|\bce\s+week[\s-]?end\b|\bweekend\b"
+    r"|\bsemaine\s+prochaine\b|\bcette\s+semaine\b|\bmois\s+prochain\b"
+    r"|\bà\s+venir\b|\bprochains?\b|\bprochainement\b|\bfuturs?\b|\ben\s+cours\b|\bencores?\s+actifs?\b"
+    r"|\b(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)"
+    r"\s+\d{4}\b"
+    r"|\b\d{4}\b",
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
+# SelfQueryRetriever configuration
+# ---------------------------------------------------------------------------
+
+DOCUMENT_CONTENT_DESCRIPTION = (
+    "Description d'un événement culturel public en France "
+    "(concert, exposition, festival, spectacle, atelier, conférence, etc.). "
+    "Les événements peuvent s'étaler sur plusieurs mois : start_date est le début, "
+    "end_date est la fin. Un événement est actif si start_date <= date_cherchée <= end_date."
+)
+
+METADATA_FIELD_INFO = [
+    AttributeInfo(
+        name="city",
+        description="Ville où se déroule l'événement (ex: Paris, Lyon, Toulouse)",
+        type="string",
+    ),
+    AttributeInfo(
+        name="region",
+        description="Région où se déroule l'événement (ex: Île-de-France, Occitanie)",
+        type="string",
+    ),
+    AttributeInfo(
+        name="start_date",
+        description=(
+            "Date de début de l'événement au format YYYY-MM-DD (ex: 2025-05-06). "
+            "IMPORTANT : un événement est EN COURS pendant une période [D1, D2] si start_date <= D2. "
+            "Pour chercher les événements actifs en mai 2026, utiliser start_date <= '2026-05-31'."
+        ),
+        type="string",
+    ),
+    AttributeInfo(
+        name="end_date",
+        description=(
+            "Date de fin de l'événement au format YYYY-MM-DD (ex: 2026-05-31). "
+            "IMPORTANT : un événement est EN COURS pendant une période [D1, D2] si end_date >= D1. "
+            "Pour chercher les événements actifs en mai 2026, utiliser end_date >= '2026-05-01'."
+        ),
+        type="string",
+    ),
+    AttributeInfo(
+        name="is_free",
+        description="Vrai si l'événement est gratuit, Faux sinon",
+        type="boolean",
+    ),
+    AttributeInfo(
+        name="keywords",
+        description="Mots-clés et thématiques de l'événement (ex: jazz, nature, patrimoine, danse)",
+        type="string",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# Custom FAISS translator (callable filter — supporte tous les opérateurs)
+# ---------------------------------------------------------------------------
+
+class FaissCallableTranslator(Visitor):
+    """Traduit un StructuredQuery en callable Python pour le filtre FAISS.
+
+    FAISS accepte un callable `(metadata: dict) -> bool` comme filtre.
+    Cette approche supporte EQ, NE, GT, GTE, LT, LTE, LIKE et les
+    opérateurs AND/OR/NOT, y compris les plages de dates ISO (comparaison
+    lexicographique correcte sur le format YYYY-MM-DD).
+    """
+
+    allowed_comparators = [
+        Comparator.EQ,
+        Comparator.NE,
+        Comparator.GT,
+        Comparator.GTE,
+        Comparator.LT,
+        Comparator.LTE,
+        Comparator.LIKE,
+    ]
+    allowed_operators = [Operator.AND, Operator.OR, Operator.NOT]
+
+    def visit_comparison(self, comparison: Comparison) -> Callable:
+        attr = comparison.attribute
+        comparator = comparison.comparator
+        value = comparison.value
+
+        def _normalize(v: Any) -> str:
+            """Normalise les valeurs pour la comparaison (gère bool, str, int, dict date)."""
+            if isinstance(v, dict):
+                return v.get("date", str(v))  # {'date': '2026-05-01', 'type': 'date'} → '2026-05-01'
+            if isinstance(v, bool):
+                return str(v).lower()  # True→"true", False→"false"
+            if isinstance(v, str) and v.lower() in ("true", "false"):
+                return v.lower()
+            return str(v)
+
+        def check(metadata: dict) -> bool:
+            meta_val = metadata.get(attr)
+            if meta_val is None:
+                return False
+            mv = _normalize(meta_val)
+            vv = _normalize(value)
+            if comparator == Comparator.EQ:
+                return mv == vv
+            if comparator == Comparator.NE:
+                return mv != vv
+            if comparator == Comparator.GT:
+                return mv > vv
+            if comparator == Comparator.GTE:
+                return mv >= vv
+            if comparator == Comparator.LT:
+                return mv < vv
+            if comparator == Comparator.LTE:
+                return mv <= vv
+            if comparator == Comparator.LIKE:
+                return vv.lower() in mv.lower()
+            return False
+
+        return check
+
+    def visit_operation(self, operation: Operation) -> Callable:
+        filters = [arg.accept(self) for arg in operation.arguments]
+        if operation.operator == Operator.AND:
+            return lambda m: all(f(m) for f in filters)
+        if operation.operator == Operator.OR:
+            return lambda m: any(f(m) for f in filters)
+        # NOT
+        return lambda m: not filters[0](m)
+
+    def visit_structured_query(
+        self, structured_query: StructuredQuery
+    ) -> tuple[str, dict]:
+        if structured_query.filter is not None:
+            filter_func = structured_query.filter.accept(self)
+            return structured_query.query, {"filter": filter_func}
+        return structured_query.query, {}
+
+
+# ---------------------------------------------------------------------------
+# VectorStoreManager
+# ---------------------------------------------------------------------------
 
 class VectorStoreManager:
-    """Gère la création, le chargement et la recherche dans un index Faiss.
+    """Gère la création, le chargement et la recherche dans un index FAISS LangChain.
 
-    Supporte les modèles Mistral (via API) et les modèles HuggingFace
-    (via sentence-transformers, installation optionnelle).
+    Utilise SelfQueryRetriever pour extraire des filtres structurés (ville, dates,
+    gratuité) depuis la requête en langage naturel avant la recherche vectorielle.
     """
 
     def __init__(
@@ -30,22 +190,18 @@ class VectorStoreManager:
         embedding_model: str = None,
         vector_db_dir: str = VECTOR_DB_DIR,
     ):
-        self._faiss_index_file = os.path.join(vector_db_dir, "faiss_index.idx")
-        self._document_chunks_file = os.path.join(vector_db_dir, "document_chunks.pkl")
+        self._vector_db_dir = vector_db_dir
         self._index_metadata_file = os.path.join(vector_db_dir, "index_metadata.json")
 
         saved_meta = self._read_metadata()
-
         self.embedding_model = (
             embedding_model
             or (saved_meta.get("embedding_model") if saved_meta else None)
             or EMBEDDING_MODEL
         )
 
-        self.index: faiss.Index | None = None
-        self.document_chunks: list[dict] = []
-        self._hf_model = None
-        self.mistral_client = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
+        self._faiss_store: LangchainFAISS | None = None
+        self._llm: ChatMistralAI | None = None
 
         self._load_index_and_chunks()
 
@@ -65,75 +221,65 @@ class VectorStoreManager:
     def get_metadata(self) -> dict | None:
         return self._read_metadata()
 
-    def _save_metadata(self, num_documents: int) -> None:
+    def _save_metadata(self, num_documents: int, cities: list[str] | None = None) -> None:
         os.makedirs(os.path.dirname(self._index_metadata_file), exist_ok=True)
         meta = {
             "embedding_model": self.embedding_model,
             "created_at": datetime.datetime.now().isoformat(),
             "num_documents": num_documents,
+            "cities": sorted(cities) if cities else [],
         }
         with open(self._index_metadata_file, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, ensure_ascii=False)
 
     # ------------------------------------------------------------------
-    # HuggingFace model helpers
+    # Embedding / LLM helpers
     # ------------------------------------------------------------------
 
     def _is_hf_model(self) -> bool:
         return not self.embedding_model.startswith("mistral")
 
-    def _get_hf_model(self):
-        if self._hf_model is None:
+    def _get_langchain_embeddings(self):
+        if self._is_hf_model():
             try:
-                from sentence_transformers import SentenceTransformer
+                from langchain_community.embeddings import HuggingFaceEmbeddings
             except ImportError as exc:
                 raise ImportError(
                     "Le package sentence-transformers n'est pas installé. "
                     "Exécutez: uv add sentence-transformers"
                 ) from exc
-            logging.info(f"Chargement du modèle HuggingFace: {self.embedding_model}")
-            self._hf_model = SentenceTransformer(self.embedding_model)
-        return self._hf_model
+            return HuggingFaceEmbeddings(model_name=self.embedding_model)
+        return MistralAIEmbeddings(model=self.embedding_model, api_key=MISTRAL_API_KEY)
+
+    def _get_llm(self) -> ChatMistralAI:
+        if self._llm is None:
+            self._llm = ChatMistralAI(
+                model=CHAT_MODEL, api_key=MISTRAL_API_KEY, temperature=0
+            )
+        return self._llm
 
     # ------------------------------------------------------------------
     # Index persistence
     # ------------------------------------------------------------------
 
     def _load_index_and_chunks(self) -> None:
-        if os.path.exists(self._faiss_index_file) and os.path.exists(self._document_chunks_file):
+        index_path = os.path.join(self._vector_db_dir, "index.faiss")
+        if os.path.exists(index_path):
             try:
-                logging.info(f"Chargement de l'index Faiss depuis {self._faiss_index_file}.")
-                self.index = faiss.read_index(self._faiss_index_file)
-                with open(self._document_chunks_file, "rb") as f:
-                    self.document_chunks = pickle.load(f)
-                logging.info(
-                    f"Index ({self.index.ntotal} vecteurs) et "
-                    f"{len(self.document_chunks)} chunks chargés."
+                logging.info(f"Chargement de l'index LangChain FAISS depuis {self._vector_db_dir}.")
+                embeddings = self._get_langchain_embeddings()
+                self._faiss_store = LangchainFAISS.load_local(
+                    self._vector_db_dir,
+                    embeddings,
+                    allow_dangerous_deserialization=True,
                 )
+                logging.info(f"Index chargé ({self._faiss_store.index.ntotal} vecteurs).")
             except Exception as e:
-                logging.error(f"Erreur lors du chargement de l'index/chunks Faiss: {e}")
-                self.index = None
-                self.document_chunks = []
+                logging.error(f"Erreur lors du chargement de l'index FAISS: {e}")
+                self._faiss_store = None
         else:
-            self.index = None
-            self.document_chunks = []
+            self._faiss_store = None
             logging.info("Aucun index existant trouvé. Initialisation d'un index vide.")
-
-    def _save_index_and_chunks(self) -> None:
-        if self.index is None or not self.document_chunks:
-            logging.warning("Tentative de sauvegarde d'un index ou de chunks vides.")
-            return
-        os.makedirs(os.path.dirname(self._faiss_index_file), exist_ok=True)
-        os.makedirs(os.path.dirname(self._document_chunks_file), exist_ok=True)
-        try:
-            logging.info(f"Sauvegarde de l'index Faiss dans {self._faiss_index_file}...")
-            faiss.write_index(self.index, self._faiss_index_file)
-            logging.info(f"Sauvegarde des chunks dans {self._document_chunks_file}...")
-            with open(self._document_chunks_file, "wb") as f:
-                pickle.dump(self.document_chunks, f)
-            logging.info("Index et chunks sauvegardés avec succès.")
-        except Exception as e:
-            logging.error(f"Erreur lors de la sauvegarde de l'index/chunks: {e}")
 
     # ------------------------------------------------------------------
     # Build
@@ -144,7 +290,7 @@ class VectorStoreManager:
         documents: list[Document],
         progress_callback: Callable[[str], None] = None,
     ) -> None:
-        """Construit l'index Faiss à partir des documents."""
+        """Construit l'index FAISS LangChain à partir des documents."""
 
         def _progress(msg: str) -> None:
             logging.info(msg)
@@ -155,122 +301,21 @@ class VectorStoreManager:
             logging.warning("Aucun document fourni pour la construction de l'index.")
             return
 
-        _progress("Création des chunks (1 document = 1 chunk)...")
-        self.document_chunks = self._split_documents_to_chunks(documents)
-        if not self.document_chunks:
-            logging.warning("Aucun chunk généré à partir des documents fournis.")
-            return
+        _progress(f"Génération des embeddings pour {len(documents)} documents (modèle: {self.embedding_model})...")
+        embeddings = self._get_langchain_embeddings()
 
-        _progress(f"Génération des embeddings pour {len(self.document_chunks)} chunks (modèle: {self.embedding_model})...")
-        embeddings = self._generate_embeddings(self.document_chunks, progress_callback)
-        if embeddings is None or embeddings.shape[0] != len(self.document_chunks):
-            logging.error("Échec de la génération des embeddings. L'index ne sera pas construit.")
-            self.document_chunks = []
-            self.index = None
-            for path in [self._faiss_index_file, self._document_chunks_file]:
-                if os.path.exists(path):
-                    os.remove(path)
-            return
+        _progress("Construction de l'index FAISS...")
+        self._faiss_store = LangchainFAISS.from_documents(documents, embeddings)
 
-        _progress("Construction de l'index FAISS (IndexFlatIP, similarité cosinus)...")
-        dimension = embeddings.shape[1]
-        faiss.normalize_L2(embeddings)
-        self.index = faiss.IndexFlatIP(dimension)
-        self.index.add(embeddings)
-        logging.info(f"Index Faiss créé avec {self.index.ntotal} vecteurs.")
-
-        _progress("Sauvegarde de l'index et des chunks sur le disque...")
-        self._save_index_and_chunks()
-        self._save_metadata(num_documents=len(documents))
-        _progress(f"Index sauvegardé — {len(documents)} documents, {len(self.document_chunks)} chunks.")
-
-    def _split_documents_to_chunks(self, documents: list[Document]) -> list[dict]:
-        all_chunks = []
-        for doc_counter, doc in enumerate(documents):
-            all_chunks.append(
-                {
-                    "id": f"doc{doc_counter}_0",
-                    "text": f"{doc.page_content}",
-                    "metadata": doc.metadata,
-                }
-            )
-        return all_chunks
+        _progress("Sauvegarde de l'index sur le disque...")
+        os.makedirs(self._vector_db_dir, exist_ok=True)
+        self._faiss_store.save_local(self._vector_db_dir)
+        cities = sorted({doc.metadata.get("city", "") for doc in documents if doc.metadata.get("city")})
+        self._save_metadata(num_documents=len(documents), cities=cities)
+        _progress(f"Index sauvegardé — {len(documents)} documents indexés.")
 
     # ------------------------------------------------------------------
-    # Embedding generation
-    # ------------------------------------------------------------------
-
-    def _generate_embeddings(
-        self,
-        chunks: list[dict],
-        progress_callback: Callable[[str], None] = None,
-    ) -> np.ndarray | None:
-        if self._is_hf_model():
-            return self._generate_embeddings_hf(chunks)
-        return self._generate_embeddings_mistral(chunks, progress_callback)
-
-    def _generate_embeddings_hf(self, chunks: list[dict]) -> np.ndarray | None:
-        try:
-            model = self._get_hf_model()
-            texts = [chunk["text"] for chunk in chunks]
-            logging.info(f"Génération HuggingFace de {len(texts)} embeddings...")
-            embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
-            return embeddings.astype("float32")
-        except Exception as e:
-            logging.error(f"Erreur lors de la génération HuggingFace: {e}")
-            raise
-
-    def _generate_embeddings_mistral(
-        self,
-        chunks: list[dict],
-        progress_callback: Callable[[str], None] = None,
-    ) -> np.ndarray | None:
-        if not MISTRAL_API_KEY or not self.mistral_client:
-            logging.error("Impossible de générer les embeddings: MISTRAL_API_KEY manquante.")
-            return None
-        if not chunks:
-            logging.warning("Aucun chunk fourni pour générer les embeddings.")
-            return None
-
-        all_embeddings = []
-        total_batches = (len(chunks) + EMBEDDING_BATCH_SIZE - 1) // EMBEDDING_BATCH_SIZE
-
-        for i in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
-            batch_num = (i // EMBEDDING_BATCH_SIZE) + 1
-            batch_chunks = chunks[i : i + EMBEDDING_BATCH_SIZE]
-            texts_to_embed = [chunk["text"] for chunk in batch_chunks]
-
-            msg = f"Lot {batch_num}/{total_batches} ({len(texts_to_embed)} chunks)..."
-            logging.info(msg)
-            if progress_callback:
-                progress_callback(msg)
-
-            try:
-                response = self.mistral_client.embeddings.create(
-                    model=self.embedding_model,
-                    inputs=texts_to_embed,
-                )
-                batch_embeddings = [data.embedding for data in response.data]
-                all_embeddings.extend(batch_embeddings)
-            except Exception as e:
-                logging.error(f"Erreur inattendue lors de la génération d'embeddings (lot {batch_num}): {e}")
-                if all_embeddings:
-                    dim = len(all_embeddings[0])
-                    logging.warning(f"Ajout de {len(texts_to_embed)} vecteurs nuls (dim={dim}).")
-                    all_embeddings.extend([np.zeros(dim, dtype="float32")] * len(texts_to_embed))
-                else:
-                    continue
-
-        if not all_embeddings:
-            logging.error("Aucun embedding généré avec succès.")
-            return None
-
-        embeddings_array = np.array(all_embeddings, dtype="float32")
-        logging.info(f"Génération terminée. Forme finale: {embeddings_array.shape}")
-        return embeddings_array
-
-    # ------------------------------------------------------------------
-    # Search
+    # Search (SelfQueryRetriever + scores)
     # ------------------------------------------------------------------
 
     def search(
@@ -279,80 +324,132 @@ class VectorStoreManager:
         k: int = 5,
         min_score: float = None,
     ) -> list[dict]:
-        """Recherche les k chunks les plus pertinents pour une requête."""
-        if self.index is None or not self.document_chunks:
-            logging.warning("Recherche impossible: l'index Faiss n'est pas chargé ou est vide.")
+        """Recherche avec SelfQueryRetriever : filtres structurés + similarité cosinus.
+
+        Le LLM extrait les filtres (ville, dates, gratuité) de la requête naturelle,
+        puis FAISS retourne les documents les plus similaires parmi ceux qui passent
+        ces filtres.
+        """
+        if self._faiss_store is None:
+            logging.warning("Recherche impossible : aucun index chargé.")
             return []
 
+        fetch_k = k * 3 if min_score is not None else k
+        semantic_query = query_text
+        search_kwargs: dict = {}
+
+        # --- Parsing structuré via SelfQueryRetriever ---
         try:
-            if self._is_hf_model():
-                model = self._get_hf_model()
-                query_embedding = model.encode(
-                    [query_text], convert_to_numpy=True
-                ).astype("float32")
-            else:
-                if not self.mistral_client:
-                    logging.error("Recherche impossible: MISTRAL_API_KEY manquante.")
-                    return []
-                response = self.mistral_client.embeddings.create(
-                    model=self.embedding_model,
-                    inputs=[query_text],
+            retriever = SelfQueryRetriever.from_llm(
+                llm=self._get_llm(),
+                vectorstore=self._faiss_store,
+                document_contents=DOCUMENT_CONTENT_DESCRIPTION,
+                metadata_field_info=METADATA_FIELD_INFO,
+                structured_query_translator=FaissCallableTranslator(),
+                enable_limit=True,
+                verbose=True,
+            )
+            constructor_query = query_text
+            if _TEMPORAL_RE.search(query_text):
+                today = datetime.date.today()
+                first_day = today.replace(day=1)
+                last_day = (today.replace(day=28) + datetime.timedelta(days=4)).replace(day=1) - datetime.timedelta(days=1)
+                date_ctx = (
+                    f"[Date du jour: {today.isoformat()}. Règles de filtrage selon l'expression temporelle: "
+                    f"'à venir' / 'prochains' → end_date >= '{today.isoformat()}'; "
+                    f"'aujourd\\'hui' → start_date <= '{today.isoformat()}' ET end_date >= '{today.isoformat()}'; "
+                    f"'ce mois-ci' / 'en cours' → start_date <= '{last_day.isoformat()}' ET end_date >= '{first_day.isoformat()}'; "
+                    f"'mois YYYY' → start_date <= dernier_jour_du_mois ET end_date >= premier_jour_du_mois. "
+                    f"Un événement commencé avant la période peut encore être actif si end_date est dans la période.]"
                 )
-                query_embedding = np.array([response.data[0].embedding]).astype("float32")
-
-            faiss.normalize_L2(query_embedding)
-            search_k = k * 3 if min_score is not None else k
-            scores, indices = self.index.search(query_embedding, search_k)
-
-            results = []
-            if indices.size > 0:
-                for i, idx in enumerate(indices[0]):
-                    if 0 <= idx < len(self.document_chunks):
-                        chunk = self.document_chunks[idx]
-                        raw_score = float(scores[0][i])
-                        similarity = raw_score * 100
-                        min_score_percent = min_score * 100 if min_score is not None else 0
-                        if min_score is not None and similarity < min_score_percent:
-                            logging.debug(
-                                f"Document filtré (score {similarity:.2f}% < minimum {min_score_percent:.2f}%)"
-                            )
-                            continue
-                        results.append(
-                            {
-                                "score": similarity,
-                                "raw_score": raw_score,
-                                "text": chunk["text"],
-                                "metadata": chunk["metadata"],
-                            }
-                        )
-                    else:
-                        logging.warning(
-                            f"Index Faiss {idx} hors limites "
-                            f"(taille des chunks: {len(self.document_chunks)})."
-                        )
-
-            results.sort(key=lambda x: x["score"], reverse=True)
-            if len(results) > k:
-                results = results[:k]
-
-            logging.info(f"{len(results)} chunks pertinents trouvés.")
-            return results
-
+                constructor_query = f"{query_text} {date_ctx}"
+            structured_query = retriever.query_constructor.invoke({"query": constructor_query})
+            semantic_query, search_kwargs = retriever._prepare_query(query_text, structured_query)
+            logging.info(f"----- semantic query: {semantic_query}")
+            if not semantic_query or not semantic_query.strip():
+                meta = self._read_metadata()
+                cities = meta.get("cities", []) if meta else []
+                semantic_query = "événements " + " ".join(cities) if cities else query_text
+            logging.info(
+                f"SelfQueryRetriever — requête sémantique: {semantic_query!r} | "
+                f"filtre LLM: {structured_query.filter!r}"
+            )
         except Exception as e:
-            logging.error(f"Erreur inattendue lors de la recherche: {e}")
-            return []
+            logging.warning(f"SelfQueryRetriever parsing échoué, fallback sémantique : {e}")
+
+        # --- Recherche vectorielle avec scores ---
+        faiss_filter = search_kwargs.get("filter")
+        total_docs = self._faiss_store.index.ntotal
+        # Quand un filtre metadata est actif, scanner TOUS les documents : le filtre est appliqué
+        # APRÈS le ranking vectoriel, donc un document pertinent par date mais loin sémantiquement
+        # serait raté si on ne balaie pas l'index en entier.
+        # fetch_k = nombre de candidats bruts que FAISS évalue AVANT d'appliquer le filtre callable.
+        # Par défaut LangChain passe fetch_k=20, ce qui rend le filtre inopérant sur un grand index.
+        # Avec un filtre actif, on force fetch_k=total_docs pour évaluer tous les documents.
+        effective_fetch_k = total_docs if faiss_filter is not None else fetch_k
+        try:
+            docs_with_scores = self._faiss_store.similarity_search_with_relevance_scores(
+                semantic_query, k=effective_fetch_k, filter=faiss_filter, fetch_k=effective_fetch_k
+            )
+            if not docs_with_scores and faiss_filter is not None:
+                logging.warning("Filtre structuré sans résultat, fallback recherche sémantique pure.")
+                docs_with_scores = self._faiss_store.similarity_search_with_relevance_scores(
+                    semantic_query, k=fetch_k
+                )
+        except Exception as e:
+            logging.warning(f"Recherche avec filtre échouée, fallback sans filtre : {e}")
+            docs_with_scores = self._faiss_store.similarity_search_with_relevance_scores(
+                query_text, k=fetch_k
+            )
+
+        # --- Filtrage par min_score et formatage ---
+        results = []
+
+        for doc, score in docs_with_scores:
+            similarity = float(score) * 100
+            if min_score is not None and similarity < min_score * 100:
+                logging.debug(
+                    f"Document filtré (score {similarity:.2f}% < minimum {min_score * 100:.2f}%)"
+                )
+                continue
+            results.append(
+                {
+                    "score": similarity,
+                    "raw_score": float(score),
+                    "text": doc.page_content,
+                    "metadata": doc.metadata,
+                }
+            )
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        if len(results) > k:
+            results = results[:k]
+
+        logging.info(f"{len(results)} documents pertinents trouvés.")
+        return results
+
+    # ------------------------------------------------------------------
+    # Compatibility property
+    # ------------------------------------------------------------------
+
+    @property
+    def index(self):
+        """Accès au FAISS index sous-jacent (pour Chat.py : vector_store.index.ntotal)."""
+        if self._faiss_store is None:
+            return None
+        return self._faiss_store.index
 
     # ------------------------------------------------------------------
     # Reset
     # ------------------------------------------------------------------
 
     def clear_index(self) -> None:
-        """Supprime l'index, les chunks et les métadonnées du disque."""
-        self.index = None
-        self.document_chunks = []
-        self._hf_model = None
-        for path in [self._faiss_index_file, self._document_chunks_file, self._index_metadata_file]:
+        """Supprime l'index et les métadonnées du disque."""
+        self._faiss_store = None
+        self._llm = None
+        for fname in ["index.faiss", "index.pkl", "index_metadata.json"]:
+            path = os.path.join(self._vector_db_dir, fname)
             if os.path.exists(path):
                 os.remove(path)
                 logging.info(f"Fichier supprimé: {path}")
-        logging.info("Index et chunks réinitialisés.")
+        logging.info("Index réinitialisé.")
