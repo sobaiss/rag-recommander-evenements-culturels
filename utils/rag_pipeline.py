@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from mistralai.client import Mistral
 
-from utils.prompts import rag_no_results_system_prompt, rag_system_prompt
+from utils.prompts import rag_json_system_prompt, rag_no_results_system_prompt, rag_system_prompt
 from utils.query_classifier import QueryClassifier
 from utils.vector_store import VectorStoreManager
 
@@ -47,6 +47,7 @@ class RAGPipeline:
         min_score: float = 0.5,
         model: str = "mistral-large-latest",
         temperature: float = 0.1,
+        as_json: bool = False,
     ) -> RAGResult:
         now = datetime.datetime.now()
         current_date = now.strftime("%Y-%m-%d")
@@ -92,19 +93,34 @@ class RAGPipeline:
                 f"Source: {s['metadata'].get('source', 'Inconnue')} (Score: {s['score']:.2f}%)\nContenu: {s['text']}"
                 for s in sources
             )
-            system_prompt = rag_system_prompt(context_str, current_date, current_month)
+            system_prompt = (
+                rag_json_system_prompt(context_str, current_date, current_month)
+                if as_json
+                else rag_system_prompt(context_str, current_date, current_month)
+            )
         else:
             system_prompt = rag_no_results_system_prompt(current_date)
 
         # 5. Génération de la réponse (exceptions propagées vers l'appelant)
-        chat_response = self.mistral_client.chat.complete(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question},
-            ],
-            temperature=temperature,
-        )
+        if as_json and needs_rag:
+            chat_response = self.mistral_client.chat.complete(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                ],
+                temperature=temperature,
+                response_format={"type": "json_object"},
+            )
+        else:
+            chat_response = self.mistral_client.chat.complete(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": question},
+                ],
+                temperature=temperature,
+            )
 
         message = chat_response.choices[0].message
         answer = str(message.content) if message is not None else ""

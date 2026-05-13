@@ -1,6 +1,8 @@
 import datetime
+import json
 import logging
 from contextlib import asynccontextmanager
+from typing import Any, Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, status
@@ -98,6 +100,14 @@ class AskRequest(BaseModel):
         description="Identifiant du modèle Mistral.",
         examples=["mistral-small-latest", "mistral-large-latest"],
     )
+    format: Literal["text", "json"] = Field(
+        "text",
+        description=(
+            "Format de la réponse : `text` (markdown) ou `json` "
+            "(liste d'événements structurés avec title, description, location, "
+            "city, start_date, end_date, price, is_free)."
+        ),
+    )
 
 
 class SourceModel(BaseModel):
@@ -109,7 +119,7 @@ class SourceModel(BaseModel):
 
 
 class AskResponse(BaseModel):
-    answer: str = Field(..., description="Réponse générée par le modèle Mistral.")
+    answer: Any = Field(..., description="Réponse générée : texte markdown (format=text) ou objet JSON (format=json).")
     mode: str = Field(
         ..., description="Mode de traitement utilisé : `RAG` ou `DIRECT`."
     )
@@ -248,12 +258,15 @@ def ask(request: AskRequest) -> AskResponse:
             detail="La clé API Mistral (MISTRAL_API_KEY) n'est pas configurée.",
         )
 
+    as_json = request.format == "json"
+
     try:
         result = RAGPipeline(container.query_classifier, container.vector_store, container.mistral_client).run(
             question=request.question,
             k=request.k,
             min_score=request.min_score,
             model=request.model,
+            as_json=as_json,
         )
     except Exception as exc:
         logging.error(f"Erreur API Mistral: {exc}")
@@ -262,8 +275,15 @@ def ask(request: AskRequest) -> AskResponse:
             detail=f"Erreur lors de la génération de la réponse : {exc}",
         )
 
+    answer: Any = result.answer
+    if as_json:
+        try:
+            answer = json.loads(result.answer)
+        except Exception:
+            logging.warning("Impossible de parser la réponse JSON du LLM.")
+
     return AskResponse(
-        answer=result.answer,
+        answer=answer,
         mode=result.mode,
         confidence=result.confidence,
         reason=result.reason,
