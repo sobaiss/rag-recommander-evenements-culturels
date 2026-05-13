@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+.env
+.git/
+.gitignore
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+.vscode/
+
+tests/
+CLAUDE.md
+
+# Données runtime (montées via volumes)
+vector_db/
+database/
+data/
+
+# Fichiers d'évaluation
+vector_db_eval/
+evaluate_rag.py
