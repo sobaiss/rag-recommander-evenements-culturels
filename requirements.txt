@@ -3,18 +3,28 @@
 aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.13.5
-    # via langchain-community
+    # via
+    #   fsspec
+    #   instructor
+    #   langchain-community
 aiosignal==1.4.0
     # via aiohttp
 altair==6.1.0
     # via streamlit
+annotated-doc==0.0.4
+    # via
+    #   fastapi
+    #   typer
 annotated-types==0.7.0
     # via pydantic
 anyio==4.13.0
     # via
     #   httpx
+    #   openai
     #   starlette
     #   streamlit
+appdirs==1.4.4
+    # via ragas
 attrs==26.1.0
     # via
     #   aiohttp
@@ -38,17 +48,40 @@ charset-normalizer==3.4.7
 click==8.3.3
     # via
     #   streamlit
+    #   typer
     #   uvicorn
 dataclasses-json==0.6.7
     # via langchain-community
+datasets==4.8.5
+    # via ragas
+dill==0.4.1
+    # via
+    #   datasets
+    #   multiprocess
+diskcache==5.6.3
+    # via ragas
+distro==1.9.0
+    # via openai
+docstring-parser==0.18.0
+    # via instructor
 eval-type-backport==0.3.1
     # via mistralai
 faiss-cpu==1.13.2
     # via rag-recommander-evenements-culturels (pyproject.toml)
+fastapi==0.136.1
+    # via rag-recommander-evenements-culturels (pyproject.toml)
+filelock==3.29.0
+    # via
+    #   datasets
+    #   huggingface-hub
 frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
+fsspec==2026.2.0
+    # via
+    #   datasets
+    #   huggingface-hub
 gitdb==4.0.12
     # via gitpython
 gitpython==3.1.49
@@ -57,17 +90,30 @@ h11==0.16.0
     # via
     #   httpcore
     #   uvicorn
+hf-xet==1.5.0
+    # via huggingface-hub
 httpcore==1.0.9
     # via httpx
 httptools==0.7.1
     # via streamlit
 httpx==0.28.1
     # via
+    #   datasets
+    #   huggingface-hub
+    #   langchain-mistralai
     #   langgraph-sdk
     #   langsmith
     #   mistralai
+    #   ollama
+    #   openai
 httpx-sse==0.4.3
-    # via langchain-community
+    # via
+    #   langchain-community
+    #   langchain-mistralai
+huggingface-hub==1.14.0
+    # via
+    #   datasets
+    #   tokenizers
 idna==3.13
     # via
     #   anyio
@@ -76,12 +122,19 @@ idna==3.13
     #   yarl
 importlib-metadata==8.7.1
     # via opentelemetry-api
+instructor==1.15.1
+    # via ragas
 itsdangerous==2.2.0
     # via streamlit
 jinja2==3.1.6
     # via
     #   altair
+    #   instructor
     #   pydeck
+jiter==0.13.0
+    # via
+    #   instructor
+    #   openai
 jq==1.11.0
     # via rag-recommander-evenements-culturels (pyproject.toml)
 jsonpatch==1.33
@@ -95,21 +148,35 @@ jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
     # via jsonschema
 langchain==1.2.17
-    # via rag-recommander-evenements-culturels (pyproject.toml)
+    # via
+    #   rag-recommander-evenements-culturels (pyproject.toml)
+    #   ragas
 langchain-classic==1.0.6
     # via langchain-community
 langchain-community==0.4.1
-    # via rag-recommander-evenements-culturels (pyproject.toml)
+    # via
+    #   rag-recommander-evenements-culturels (pyproject.toml)
+    #   ragas
 langchain-core==1.3.3
     # via
     #   rag-recommander-evenements-culturels (pyproject.toml)
     #   langchain
     #   langchain-classic
     #   langchain-community
+    #   langchain-mistralai
+    #   langchain-ollama
+    #   langchain-openai
     #   langchain-text-splitters
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
+    #   ragas
+langchain-mistralai==1.1.4
+    # via rag-recommander-evenements-culturels (pyproject.toml)
+langchain-ollama==1.1.0
+    # via rag-recommander-evenements-culturels (pyproject.toml)
+langchain-openai==1.2.1
+    # via ragas
 langchain-protocol==0.0.15
     # via langchain-core
 langchain-text-splitters==1.1.2
@@ -131,27 +198,52 @@ langsmith==0.8.1
     #   langchain-classic
     #   langchain-community
     #   langchain-core
+lark==1.3.1
+    # via rag-recommander-evenements-culturels (pyproject.toml)
+markdown-it-py==4.2.0
+    # via rich
 markupsafe==3.0.3
     # via jinja2
 marshmallow==3.26.2
     # via dataclasses-json
+mdurl==0.1.2
+    # via markdown-it-py
 mistralai==2.4.4
     # via rag-recommander-evenements-culturels (pyproject.toml)
 multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
+multiprocess==0.70.19
+    # via datasets
 mypy-extensions==1.1.0
     # via typing-inspect
 narwhals==2.20.0
-    # via altair
+    # via
+    #   altair
+    #   plotly
+nest-asyncio==1.6.0
+    # via ragas
+networkx==3.6.1
+    # via ragas
 numpy==2.4.4
     # via
+    #   datasets
     #   faiss-cpu
     #   langchain-community
     #   pandas
     #   pydeck
+    #   ragas
+    #   scikit-network
+    #   scipy
     #   streamlit
+ollama==0.6.2
+    # via langchain-ollama
+openai==2.36.0
+    # via
+    #   instructor
+    #   langchain-openai
+    #   ragas
 opentelemetry-api==1.39.1
     # via
     #   mistralai
@@ -167,15 +259,24 @@ ormsgpack==1.12.2
 packaging==26.2
     # via
     #   altair
+    #   datasets
     #   faiss-cpu
+    #   huggingface-hub
     #   langchain-core
     #   langsmith
     #   marshmallow
+    #   plotly
     #   streamlit
 pandas==3.0.2
-    # via streamlit
+    # via
+    #   datasets
+    #   streamlit
 pillow==12.2.0
-    # via streamlit
+    # via
+    #   ragas
+    #   streamlit
+plotly==6.7.0
+    # via rag-recommander-evenements-culturels (pyproject.toml)
 propcache==0.4.1
     # via
     #   aiohttp
@@ -183,22 +284,34 @@ propcache==0.4.1
 protobuf==7.34.1
     # via streamlit
 pyarrow==24.0.0
-    # via streamlit
+    # via
+    #   datasets
+    #   streamlit
 pydantic==2.13.3
     # via
+    #   fastapi
+    #   instructor
     #   langchain
     #   langchain-classic
     #   langchain-core
+    #   langchain-mistralai
     #   langgraph
     #   langsmith
     #   mistralai
+    #   ollama
+    #   openai
     #   pydantic-settings
+    #   ragas
 pydantic-core==2.46.3
-    # via pydantic
+    # via
+    #   instructor
+    #   pydantic
 pydantic-settings==2.14.0
     # via langchain-community
 pydeck==0.9.2
     # via streamlit
+pygments==2.20.0
+    # via rich
 python-dateutil==2.9.0.post0
     # via
     #   mistralai
@@ -209,30 +322,52 @@ python-multipart==0.0.27
     # via streamlit
 pyyaml==6.0.3
     # via
+    #   datasets
+    #   huggingface-hub
     #   langchain-classic
     #   langchain-community
     #   langchain-core
+ragas==0.4.3
+    # via rag-recommander-evenements-culturels (pyproject.toml)
 referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
+regex==2026.5.9
+    # via tiktoken
 requests==2.33.1
     # via
+    #   datasets
+    #   instructor
     #   langchain-classic
     #   langchain-community
     #   langsmith
     #   requests-toolbelt
     #   streamlit
+    #   tiktoken
 requests-toolbelt==1.0.0
     # via langsmith
+rich==14.3.4
+    # via
+    #   instructor
+    #   ragas
+    #   typer
 rpds-py==0.30.0
     # via
     #   jsonschema
     #   referencing
+scikit-network==0.33.5
+    # via ragas
+scipy==1.17.1
+    # via scikit-network
+shellingham==1.5.4
+    # via typer
 six==1.17.0
     # via python-dateutil
 smmap==5.0.3
     # via gitdb
+sniffio==1.3.1
+    # via openai
 soupsieve==2.8.3
     # via beautifulsoup4
 sqlalchemy==2.0.49
@@ -240,7 +375,9 @@ sqlalchemy==2.0.49
     #   langchain-classic
     #   langchain-community
 starlette==1.0.0
-    # via streamlit
+    # via
+    #   fastapi
+    #   streamlit
 streamlit==1.57.0
     # via
     #   rag-recommander-evenements-culturels (pyproject.toml)
@@ -249,17 +386,38 @@ streamlit-feedback==0.1.4
     # via rag-recommander-evenements-culturels (pyproject.toml)
 tenacity==9.1.4
     # via
+    #   instructor
     #   langchain-community
     #   langchain-core
     #   streamlit
+tiktoken==0.12.0
+    # via
+    #   langchain-openai
+    #   ragas
+tokenizers==0.23.1
+    # via langchain-mistralai
 toml==0.10.2
     # via streamlit
+tqdm==4.67.3
+    # via
+    #   datasets
+    #   huggingface-hub
+    #   openai
+    #   ragas
+typer==0.25.1
+    # via
+    #   huggingface-hub
+    #   instructor
+    #   ragas
 typing-extensions==4.15.0
     # via
     #   altair
     #   beautifulsoup4
+    #   fastapi
+    #   huggingface-hub
     #   langchain-core
     #   langchain-protocol
+    #   openai
     #   opentelemetry-api
     #   opentelemetry-semantic-conventions
     #   pydantic
@@ -272,6 +430,7 @@ typing-inspect==0.9.0
     # via dataclasses-json
 typing-inspection==0.4.2
     # via
+    #   fastapi
     #   mistralai
     #   pydantic
     #   pydantic-settings
@@ -282,11 +441,14 @@ uuid-utils==0.14.1
     #   langchain-core
     #   langsmith
 uvicorn==0.46.0
-    # via streamlit
+    # via
+    #   rag-recommander-evenements-culturels (pyproject.toml)
+    #   streamlit
 websockets==16.0
     # via streamlit
 xxhash==3.7.0
     # via
+    #   datasets
     #   langgraph
     #   langsmith
 yarl==1.23.0
