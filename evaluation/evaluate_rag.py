@@ -292,7 +292,7 @@ def evaluate(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Évaluation RAG avec Ragas")
-    parser.add_argument("--dataset", default="data/testset.json")
+    parser.add_argument("--dataset", default="data/eval_dataset.json")
     parser.add_argument("--report", default="report/eval_report.json")
     parser.add_argument(
         "--k", type=int, default=5, help="Nombre de documents à récupérer"
