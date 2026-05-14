@@ -1,7 +1,7 @@
 import logging
 
-from utils.database import reset_database
-from utils.vector_store import VectorStoreManager
+from db.database import reset_database
+from core.vector_store import VectorStoreManager
 
 
 def reset_all():

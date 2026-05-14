@@ -3,9 +3,9 @@ from dataclasses import dataclass
 
 from mistralai.client import Mistral
 
-from utils.config import MISTRAL_API_KEY
-from utils.query_classifier import QueryClassifier
-from utils.vector_store import VectorStoreManager
+from core.config import MISTRAL_API_KEY
+from core.query_classifier import QueryClassifier
+from core.vector_store import VectorStoreManager
 
 
 @dataclass

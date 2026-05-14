@@ -13,7 +13,7 @@ services:
       - uv
       - run
       - uvicorn
-      - main:app
+      - api.main:app
       - --host
       - "0.0.0.0"
       - --port
@@ -40,7 +40,7 @@ services:
       - run
       - streamlit
       - run
-      - Chat.py
+      - app/Chat.py
       - --server.port=8501
       - --server.address=0.0.0.0
       - --server.headless=true
@@ -63,7 +63,7 @@ services:
       - run
       - streamlit
       - run
-      - FeedbackViewer.py
+      - app/FeedbackViewer.py
       - --server.port=8502
       - --server.address=0.0.0.0
       - --server.headless=true

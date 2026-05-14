@@ -8,7 +8,7 @@ from mistralai.client import Mistral
 from streamlit_feedback import streamlit_feedback  # Importez le composant
 
 # Importer nos modules locaux
-from utils.config import (
+from core.config import (
     APP_TITLE,
     AVAILABLE_EMBEDDING_MODELS,
     COMPANY_NAME,
@@ -18,16 +18,16 @@ from utils.config import (
     FRENCH_CITIES,
     INDEX_METADATA_FILE,
 )
-from utils.container import AppContainer, build_container
-from utils.database import log_interaction, update_feedback  # Importez update_feedback
-from utils.load_data import (
+from core.container import AppContainer, build_container
+from db.database import log_interaction, update_feedback  # Importez update_feedback
+from core.load_data import (
     build_openagenda_url,
     load_documents_from_url_paginated,
     save_documents_to_json,
 )
-from utils.query_classifier import QueryClassifier
-from utils.rag_pipeline import RAGPipeline
-from utils.vector_store import VectorStoreManager
+from core.query_classifier import QueryClassifier
+from core.rag_pipeline import RAGPipeline
+from core.vector_store import VectorStoreManager
 
 
 class StreamlitLogHandler(logging.Handler):

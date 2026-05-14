@@ -42,8 +42,8 @@ from ragas.testset.graph import KnowledgeGraph, Node, NodeType
 from ragas.testset.synthesizers import default_query_distribution
 from ragas.testset.transforms import apply_transforms, default_transforms
 
-from utils.config import MISTRAL_API_KEY
-from utils.load_data import load_documents_from_file
+from core.config import MISTRAL_API_KEY
+from core.load_data import load_documents_from_file
 
 current_path = os.curdir
 data_dir = os.path.join(os.curdir, "..", "data")

@@ -8,15 +8,15 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 
-from utils.config import EMBEDDING_MODEL
-from utils.container import AppContainer, build_container
-from utils.load_data import (
+from core.config import EMBEDDING_MODEL
+from core.container import AppContainer, build_container
+from core.load_data import (
     build_openagenda_url,
     load_documents_from_url_paginated,
     save_documents_to_json,
 )
-from utils.rag_pipeline import RAGPipeline
-from utils.vector_store import VectorStoreManager
+from core.rag_pipeline import RAGPipeline
+from core.vector_store import VectorStoreManager
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -374,4 +374,4 @@ def rebuild(request: RebuildRequest) -> RebuildResponse:
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)

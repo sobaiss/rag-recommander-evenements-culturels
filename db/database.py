@@ -1,4 +1,4 @@
-# utils/database.py
+# db/database.py
 import datetime
 import logging
 import os
@@ -8,7 +8,7 @@ from sqlalchemy import JSON, DateTime, Integer, String, Text, create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-from .config import DATABASE_DIR, DATABASE_URL
+from core.config import DATABASE_DIR, DATABASE_URL
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

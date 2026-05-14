@@ -20,7 +20,7 @@ from pydantic import SecretStr
 if not hasattr(_mistralai_ns, "Mistral"):
     _mistralai_ns.Mistral = _Mistral
 
-from utils.config import MISTRAL_API_KEY
+from core.config import MISTRAL_API_KEY
 
 """
 evaluate_rag.py — Évaluation automatique du pipeline RAG avec Ragas.
@@ -102,9 +102,9 @@ def run_pipeline(
 ) -> tuple[list[str], list[list[str]]]:
     """Run the RAG pipeline for each question and return answers + retrieved contexts."""
     try:
-        from utils.query_classifier import QueryClassifier
-        from utils.rag_pipeline import RAGPipeline
-        from utils.vector_store import VectorStoreManager
+        from core.query_classifier import QueryClassifier
+        from core.rag_pipeline import RAGPipeline
+        from core.vector_store import VectorStoreManager
     except ImportError as exc:
         logging.error(f"Import error: {exc}")
         sys.exit(2)

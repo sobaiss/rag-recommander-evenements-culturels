@@ -18,7 +18,7 @@ from langchain_community.vectorstores import FAISS as LangchainFAISS
 from langchain_core.documents import Document
 from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 
-from utils.config import (
+from core.config import (
     EMBEDDING_MODEL,
     MISTRAL_API_KEY,
     VECTOR_DB_DIR,

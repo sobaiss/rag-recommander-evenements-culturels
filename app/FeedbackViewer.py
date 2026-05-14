@@ -7,11 +7,8 @@ import os
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Ajouter le dossier parent au chemin de recherche des modules Python
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 # Maintenant, nous pouvons importer les modules du dossier parent
-from utils.database import get_all_interactions
+from db.database import get_all_interactions
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 

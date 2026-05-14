@@ -50,14 +50,16 @@ jobs:
 
       - name: Build FAISS index from eval dataset
         if: steps.cache-index.outputs.cache-hit != 'true'
-        run: uv run indexer.py --input-file data/eval_events.json --vector-db-dir vector_db_eval
+        run: uv run scripts/indexer.py --input-file data/eval_events.json --vector-db-dir vector_db_eval
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          PYTHONPATH: .
 
       - name: Run Ragas evaluation
         run: uv run evaluation/evaluate_rag.py
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          PYTHONPATH: .
 
       - name: Upload evaluation report
         uses: actions/upload-artifact@v4

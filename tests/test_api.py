@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-import main as _main
-from main import app
+import api.main as _main
+from api.main import app
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -216,7 +216,7 @@ async def test_ask_mistral_api_error_returns_502(http_client):
 # Tests POST /rebuild — validation
 # ──────────────────────────────────────────────────────────────────────────────
 async def test_rebuild_no_events_returns_404(http_client):
-    with patch("main.load_documents_from_url_paginated", return_value=[]):
+    with patch("api.main.load_documents_from_url_paginated", return_value=[]):
         response = await http_client.post(
             "/rebuild", json={"cities": ["VilleFantôme"], "begin_date": "2099-01-01"}
         )
@@ -225,7 +225,7 @@ async def test_rebuild_no_events_returns_404(http_client):
 
 async def test_rebuild_openagenda_network_error_returns_502(http_client):
     with patch(
-        "main.load_documents_from_url_paginated", side_effect=ConnectionError("timeout")
+        "api.main.load_documents_from_url_paginated", side_effect=ConnectionError("timeout")
     ):
         response = await http_client.post("/rebuild", json={})
     assert response.status_code == 502
@@ -247,11 +247,11 @@ async def test_rebuild_success(http_client):
     }
 
     with (
-        patch("main.load_documents_from_url_paginated", return_value=[mock_doc]),
+        patch("api.main.load_documents_from_url_paginated", return_value=[mock_doc]),
         patch(
-            "main.save_documents_to_json", return_value="data/openagenda_20260506.json"
+            "api.main.save_documents_to_json", return_value="data/openagenda_20260506.json"
         ),
-        patch("main.VectorStoreManager", return_value=mock_new_store),
+        patch("api.main.VectorStoreManager", return_value=mock_new_store),
     ):
         response = await http_client.post(
             "/rebuild",
@@ -282,9 +282,9 @@ async def test_rebuild_updates_in_memory_vector_store(http_client):
     mock_doc.metadata = {}
 
     with (
-        patch("main.load_documents_from_url_paginated", return_value=[mock_doc]),
-        patch("main.save_documents_to_json", return_value="data/test.json"),
-        patch("main.VectorStoreManager", return_value=mock_new_store),
+        patch("api.main.load_documents_from_url_paginated", return_value=[mock_doc]),
+        patch("api.main.save_documents_to_json", return_value="data/test.json"),
+        patch("api.main.VectorStoreManager", return_value=mock_new_store),
     ):
         await http_client.post("/rebuild", json={})
 
@@ -295,7 +295,7 @@ async def test_rebuild_updates_in_memory_vector_store(http_client):
 # Tests POST /rebuild — construction de l'URL OpenAgenda
 # ──────────────────────────────────────────────────────────────────────────────
 async def test_rebuild_url_contains_city_filter(http_client):
-    with patch("main.load_documents_from_url_paginated", return_value=[]) as mock_fetch:
+    with patch("api.main.load_documents_from_url_paginated", return_value=[]) as mock_fetch:
         await http_client.post("/rebuild", json={"cities": ["Bordeaux"]})
         called_url = mock_fetch.call_args[0][0]
 
@@ -304,7 +304,7 @@ async def test_rebuild_url_contains_city_filter(http_client):
 
 async def test_rebuild_url_contains_date_filter_formatted(http_client):
     """La date YYYY-MM-DD doit être convertie en YYYY%2FMM dans l'URL."""
-    with patch("main.load_documents_from_url_paginated", return_value=[]) as mock_fetch:
+    with patch("api.main.load_documents_from_url_paginated", return_value=[]) as mock_fetch:
         await http_client.post("/rebuild", json={"begin_date": "2026-03-15"})
         called_url = mock_fetch.call_args[0][0]
 
@@ -313,7 +313,7 @@ async def test_rebuild_url_contains_date_filter_formatted(http_client):
 
 async def test_rebuild_url_no_filter_when_no_city(http_client):
     """Sans villes sélectionnées, l'URL ne doit pas contenir refine.location_city."""
-    with patch("main.load_documents_from_url_paginated", return_value=[]) as mock_fetch:
+    with patch("api.main.load_documents_from_url_paginated", return_value=[]) as mock_fetch:
         await http_client.post("/rebuild", json={"cities": []})
         called_url = mock_fetch.call_args[0][0]
 

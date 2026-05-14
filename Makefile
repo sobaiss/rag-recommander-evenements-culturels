@@ -25,26 +25,26 @@ help:
 	@echo "  make reset       - Reset the application state (asks for confirmation)"
 
 index:
-	uv run indexer.py $(if $(input-file),--input-file $(input-file)) $(if $(data-url),--data-url $(data-url)) $(if $(vector-db-dir),--vector-db-dir $(vector-db-dir))
+	PYTHONPATH=. uv run scripts/indexer.py $(if $(input-file),--input-file $(input-file)) $(if $(data-url),--data-url $(data-url)) $(if $(vector-db-dir),--vector-db-dir $(vector-db-dir))
 # 	make index data-url="https://public.opendatasoft.com/api/records/1.0/search/?rows=40&disjunctive.keywords_fr=true&disjunctive.location_region=true&disjunctive.location_countrycode=true&disjunctive.location_department=true&disjunctive.location_city=true&refine.location_region=%C3%8Ele-de-France&refine.firstdate_begin=2025%2F04&start=0&dataset=evenements-publics-openagenda&timezone=Europe%2FBerlin&lang=fr"
 
 chat:
-	uv run streamlit run Chat.py
+	PYTHONPATH=. uv run streamlit run app/Chat.py
 
 feedback:
-	uv run streamlit run FeedbackViewer.py
+	PYTHONPATH=. uv run streamlit run app/FeedbackViewer.py
 
 api:
-	uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+	PYTHONPATH=. uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
 test:
 	uv run pytest tests/ -v
 
 eval-build:
-	uv run indexer.py --input-file data/eval_events.json --vector-db-dir vector_db_eval
+	PYTHONPATH=. uv run scripts/indexer.py --input-file data/eval_events.json --vector-db-dir vector_db_eval
 
 eval:
-	uv run evaluation/evaluate_rag.py --dataset data/eval_dataset.json --report report/eval_report.json --evaluator=mistral
+	PYTHONPATH=. uv run evaluation/evaluate_rag.py --dataset data/eval_dataset.json --report report/eval_report.json --evaluator=mistral
 
 lint:
 	ruff check .
@@ -58,7 +58,7 @@ install:
 reset:
 	@read -p "Are you sure you want to reset? [y/N] " confirm; \
 	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-		uv run reset.py; \
+		PYTHONPATH=. uv run scripts/reset.py; \
 	else \
 		echo "Reset cancelled."; \
 	fi

@@ -1,4 +1,4 @@
-from utils.config import COMPANY_NAME
+from core.config import COMPANY_NAME
 
 
 def rag_system_prompt(context_str: str, current_date: str, current_month: str) -> str:

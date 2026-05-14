@@ -1,12 +1,12 @@
 import argparse
 import logging
 
-from utils.load_data import (
+from core.load_data import (
     load_documents_from_file,
     load_documents_from_url,
     save_documents_to_json,
 )
-from utils.vector_store import VectorStoreManager
+from core.vector_store import VectorStoreManager
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"

@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
+ENV PYTHONPATH=/app
 
 # Installer les dépendances en premier (couche mise en cache séparément)
 COPY pyproject.toml uv.lock ./
@@ -21,4 +22,4 @@ COPY . .
 RUN mkdir -p vector_db database data
 
 # Commande par défaut : API (surchargée par docker-compose pour les autres services)
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

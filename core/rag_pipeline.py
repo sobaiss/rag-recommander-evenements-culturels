@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 
 from mistralai.client import Mistral
 
-from utils.prompts import rag_json_system_prompt, rag_no_results_system_prompt, rag_system_prompt
-from utils.query_classifier import QueryClassifier
-from utils.vector_store import VectorStoreManager
+from core.prompts import rag_json_system_prompt, rag_no_results_system_prompt, rag_system_prompt
+from core.query_classifier import QueryClassifier
+from core.vector_store import VectorStoreManager
 
 NO_RESULTS_ANSWER = (
     "Je n'ai trouvé aucun événement correspondant à votre recherche dans la base indexée.\n\n"
