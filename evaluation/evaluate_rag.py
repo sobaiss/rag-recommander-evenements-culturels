@@ -2,11 +2,25 @@
 # Compatibility shim: instructor (dependency of ragas) does `from mistralai import Mistral`
 # but mistralai 2.x is a namespace package with no top-level __init__.py, so that import fails.
 # This must run before any ragas/instructor import.
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
 import mistralai as _mistralai_ns
+from langchain_core.rate_limiters import InMemoryRateLimiter
 from mistralai.client import Mistral as _Mistral
+from pandas import DataFrame
+from pydantic import SecretStr
 
 if not hasattr(_mistralai_ns, "Mistral"):
     _mistralai_ns.Mistral = _Mistral
+
+from utils.config import MISTRAL_API_KEY
 
 """
 evaluate_rag.py — Évaluation automatique du pipeline RAG avec Ragas.
@@ -37,12 +51,14 @@ import logging
 import sys
 import time
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 THRESHOLDS = {
     "faithfulness": 0.5,
-    "answer_relevancy": 0.5,
-    "context_precision_with_reference": 0.4,
+    "factual_correctness(mode=f1)": 0.5,
+    "llm_context_precision_with_reference": 0.4,
     "context_recall": 0.4,
 }
 
@@ -50,12 +66,14 @@ EVAL_VECTOR_DB_DIR = "vector_db_eval"
 
 from langchain_core.callbacks.base import BaseCallbackHandler
 
+
 class DebugCallback(BaseCallbackHandler):
     def on_llm_start(self, serialized, prompts, **kwargs):
         print("=== PROMPTS ENVOYÉS À MISTRAL ===")
         for p in prompts:
             print(p)
             print("-" * 80)
+
 
 def load_dataset(path: str) -> list[dict]:
     with open(path, encoding="utf-8") as f:
@@ -70,19 +88,20 @@ def _run_with_backoff(fn, max_retries: int = 6, base_wait: float = 5.0):
         except Exception as exc:
             is_429 = "429" in str(exc) or "Too Many Requests" in str(exc)
             if is_429 and attempt < max_retries - 1:
-                wait = base_wait * (2 ** attempt)
-                logging.warning(f"429 rate limit — attente {wait:.0f}s (tentative {attempt + 1}/{max_retries})")
+                wait = base_wait * (2**attempt)
+                logging.warning(
+                    f"429 rate limit — attente {wait:.0f}s (tentative {attempt + 1}/{max_retries})"
+                )
                 time.sleep(wait)
             else:
                 raise
 
 
-def run_pipeline(questions: list[str], k: int = 5, delay: float = 2.0) -> tuple[list[str], list[list[str]]]:
+def run_pipeline(
+    questions: list[str], k: int = 5, delay: float = 2.0
+) -> tuple[list[str], list[list[str]]]:
     """Run the RAG pipeline for each question and return answers + retrieved contexts."""
     try:
-        from mistralai.client import Mistral
-
-        from utils.config import MISTRAL_API_KEY
         from utils.query_classifier import QueryClassifier
         from utils.rag_pipeline import RAGPipeline
         from utils.vector_store import VectorStoreManager
@@ -99,7 +118,7 @@ def run_pipeline(questions: list[str], k: int = 5, delay: float = 2.0) -> tuple[
         logging.error("L'index FAISS est vide. Lancez d'abord : make eval-build")
         sys.exit(2)
 
-    mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+    mistral_client = _Mistral(api_key=MISTRAL_API_KEY)
     classifier = QueryClassifier()
     pipeline = RAGPipeline(classifier, vector_store, mistral_client)
 
@@ -111,31 +130,39 @@ def run_pipeline(questions: list[str], k: int = 5, delay: float = 2.0) -> tuple[
             time.sleep(delay)
         logging.info(f"Question {i + 1}/{len(questions)} : {question!r}")
         result = _run_with_backoff(
-            lambda q=question: pipeline.run(question=q, k=k, min_score=0.0, model="mistral-small-latest")
+            lambda q=question: pipeline.run(
+                question=q, k=k, min_score=0.0, model="mistral-small-latest"
+            )
         )
-        answers.append(result.answer)
-        contexts.append([s["text"] for s in result.sources] if result.sources else [""])
+        if result:
+            answers.append(result.answer)
+            contexts.append(
+                [s["text"] for s in result.sources] if result.sources else [""]
+            )
 
     return answers, contexts
 
 
-def build_ragas_dataset(questions, ground_truths, answers, contexts):
+def build_ragas_dataset(questions, references, answers, contexts):
     try:
-        from ragas import EvaluationDataset, SingleTurnSample
+        from ragas import EvaluationDataset
     except ImportError:
         logging.error("Package 'ragas' manquant. Installez avec : uv sync")
         sys.exit(2)
 
-    samples = [
-        SingleTurnSample(
-            user_input=q,
-            response=a,
-            retrieved_contexts=ctx,
-            reference=gt,
+    samples = []
+    for question, answer, context, reference in zip(
+        questions, answers, contexts, references
+    ):
+        samples.append(
+            {
+                "user_input": question,
+                "response": answer,
+                "retrieved_contexts": context,
+                "reference": reference,
+            }
         )
-        for q, a, ctx, gt in zip(questions, answers, contexts, ground_truths)
-    ]
-    return EvaluationDataset(samples=samples)
+    return EvaluationDataset.from_list(samples)
 
 
 def _build_evaluator_ollama(ollama_model: str, ollama_embed: str):
@@ -148,7 +175,9 @@ def _build_evaluator_ollama(ollama_model: str, ollama_embed: str):
             from ragas.embeddings import LangchainEmbeddingsWrapper
             from ragas.llms import LangchainLLMWrapper
     except ImportError as exc:
-        logging.error(f"Package manquant ({exc}). Installez avec : uv add langchain-ollama")
+        logging.error(
+            f"Package manquant ({exc}). Installez avec : uv add langchain-ollama"
+        )
         sys.exit(2)
 
     logging.info(f"Évaluateur : Ollama ({ollama_model} + {ollama_embed})")
@@ -176,23 +205,37 @@ def _build_evaluator_mistral():
         logging.error(f"Package Ragas manquant ({exc}). Installez avec : uv sync")
         sys.exit(2)
 
-    from utils.config import MISTRAL_API_KEY
-
     logging.info("Évaluateur : Mistral API (avec retry sur 429)")
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+        rate_limiter = InMemoryRateLimiter(
+            requests_per_second=0.33,
+            check_every_n_seconds=0.1,
+            max_bucket_size=1,
+        )
+
+        secretApiKey = SecretStr(MISTRAL_API_KEY if MISTRAL_API_KEY else "")
         return (
             LangchainLLMWrapper(
-                ChatMistralAI(mistral_api_key=MISTRAL_API_KEY, model="mistral-small-latest", temperature=0)
+                ChatMistralAI(
+                    api_key=secretApiKey,
+                    model_name="mistral-small-latest",
+                    temperature=0,
+                    max_retries=6,
+                    rate_limiter=rate_limiter,
+                )
             ),
             LangchainEmbeddingsWrapper(
-                MistralAIEmbeddings(mistral_api_key=MISTRAL_API_KEY, model="mistral-embed")
+                MistralAIEmbeddings(api_key=secretApiKey, model="mistral-embed")
             ),
-            RunConfig(max_retries=5, max_wait=60),
+            RunConfig(max_retries=6, max_wait=60),
         )
 
 
-def evaluate(dataset, evaluator: str, ollama_model: str, ollama_embed: str) -> dict[str, float]:
+def evaluate(
+    dataset, evaluator: str, ollama_model: str, ollama_embed: str
+) -> DataFrame:
     import warnings
 
     try:
@@ -202,32 +245,38 @@ def evaluate(dataset, evaluator: str, ollama_model: str, ollama_embed: str) -> d
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=DeprecationWarning)
             from ragas import evaluate as ragas_evaluate
+            from ragas.dataset_schema import EvaluationResult
             from ragas.metrics import (
+                FactualCorrectness,
+                Faithfulness,
                 LLMContextPrecisionWithReference,
                 LLMContextRecall,
-                answer_relevancy,
-                faithfulness,
             )
     except ImportError as exc:
         logging.error(f"Package Ragas manquant ({exc}). Installez avec : uv sync")
         sys.exit(2)
 
     if evaluator == "ollama":
-        llm, embeddings, run_config = _build_evaluator_ollama(ollama_model, ollama_embed)
+        llm, embeddings, run_config = _build_evaluator_ollama(
+            ollama_model, ollama_embed
+        )
     else:
         llm, embeddings, run_config = _build_evaluator_mistral()
 
     metrics = [
-        faithfulness,
-        answer_relevancy,
-        LLMContextPrecisionWithReference(llm=llm),
-        LLMContextRecall(llm=llm),
+        Faithfulness(),
+        FactualCorrectness(),
+        LLMContextPrecisionWithReference(),
+        LLMContextRecall(),
     ]
-    faithfulness.llm = llm
-    answer_relevancy.llm = llm
-    answer_relevancy.embeddings = embeddings
 
-    kwargs = {"dataset": dataset, "metrics": metrics, "callbacks": [DebugCallback()]}
+    kwargs = {
+        "dataset": dataset,
+        "metrics": metrics,
+        "llm": llm,
+        "embeddings": embeddings,
+        # "callbacks": [DebugCallback()],
+    }
     if run_config is not None:
         kwargs["run_config"] = run_config
 
@@ -235,15 +284,19 @@ def evaluate(dataset, evaluator: str, ollama_model: str, ollama_embed: str) -> d
         warnings.filterwarnings("ignore", category=DeprecationWarning, module="ragas")
         result = ragas_evaluate(**kwargs)
 
+    assert isinstance(result, EvaluationResult)
     df = result.to_pandas()
-    return {col: float(df[col].mean()) for col in THRESHOLDS if col in df.columns}
+
+    return df
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Évaluation RAG avec Ragas")
-    parser.add_argument("--dataset", default="data/eval_dataset.json")
-    parser.add_argument("--report", default="data/eval_report.json")
-    parser.add_argument("--k", type=int, default=5, help="Nombre de documents à récupérer")
+    parser.add_argument("--dataset", default="data/testset.json")
+    parser.add_argument("--report", default="report/eval_report.json")
+    parser.add_argument(
+        "--k", type=int, default=5, help="Nombre de documents à récupérer"
+    )
     parser.add_argument(
         "--pipeline-delay",
         type=float,
@@ -253,12 +306,16 @@ def main() -> None:
     parser.add_argument(
         "--evaluator",
         choices=["ollama", "mistral"],
-        default="ollama",
+        default="mistral",
         help="LLM juge pour Ragas : ollama (local, défaut) ou mistral (API)",
     )
-    parser.add_argument("--ollama-model", default="mistral", help="Modèle Ollama pour le LLM juge")
     parser.add_argument(
-        "--ollama-embed", default="nomic-embed-text", help="Modèle Ollama pour les embeddings"
+        "--ollama-model", default="mistral", help="Modèle Ollama pour le LLM juge"
+    )
+    parser.add_argument(
+        "--ollama-embed",
+        default="nomic-embed-text",
+        help="Modèle Ollama pour les embeddings",
     )
     args = parser.parse_args()
 
@@ -268,19 +325,29 @@ def main() -> None:
         logging.error(f"Dataset introuvable : {args.dataset}")
         sys.exit(2)
 
-    questions = [p["question"] for p in pairs]
-    ground_truths = [p["ground_truth"] for p in pairs]
-    answers = [p["answer"] for p in pairs]
-    contexts = [p["contexts"] for p in pairs]
+    questions = [p["user_input"] for p in pairs]
+    references = [p["reference"] for p in pairs]
 
-    # answers, contexts = run_pipeline(questions, k=args.k, delay=args.pipeline_delay)
+    answers, contexts = run_pipeline(questions, k=args.k, delay=args.pipeline_delay)
 
-    ragas_dataset = build_ragas_dataset(questions, ground_truths, answers, contexts)
+    ragas_dataset = build_ragas_dataset(questions, references, answers, contexts)
 
     logging.info("Lancement de l'évaluation Ragas...")
-    scores = evaluate(ragas_dataset, args.evaluator, args.ollama_model, args.ollama_embed)
+    evaluation_result = evaluate(
+        ragas_dataset, args.evaluator, args.ollama_model, args.ollama_embed
+    )
+
+    os.makedirs("report", exist_ok=True)
+    evaluation_result.to_json("report/evaluation_result.json")
+
+    scores = {
+        col: float(evaluation_result[col].mean())
+        for col in THRESHOLDS
+        if col in evaluation_result.columns
+    }
 
     passed = {metric: score >= THRESHOLDS[metric] for metric, score in scores.items()}
+
     report = {
         "scores": scores,
         "thresholds": THRESHOLDS,
@@ -289,7 +356,7 @@ def main() -> None:
         "evaluator": args.evaluator,
         "qa_pairs": [
             {"question": q, "answer": a, "ground_truth": gt}
-            for q, a, gt in zip(questions, answers, ground_truths)
+            for q, a, gt in zip(questions, answers, references)
         ],
     }
 

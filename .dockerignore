@@ -22,4 +22,4 @@ data/
 
 # Fichiers d'évaluation
 vector_db_eval/
-evaluate_rag.py
+evaluation/

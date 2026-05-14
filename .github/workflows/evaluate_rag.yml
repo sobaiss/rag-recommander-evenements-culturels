@@ -45,7 +45,7 @@ jobs:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
       - name: Run Ragas evaluation
-        run: uv run evaluate_rag.py --dataset data/eval_dataset.json --report data/eval_report.json
+        run: uv run evaluation/evaluate_rag.py
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
@@ -54,7 +54,7 @@ jobs:
         if: always()
         with:
           name: eval-report-${{ github.run_id }}
-          path: data/eval_report.json
+          path: report/eval_report.json
           retention-days: 30
 
       - name: Print report summary
@@ -64,7 +64,7 @@ jobs:
           python3 - << 'EOF'
           import json, os
           try:
-              with open("data/eval_report.json") as f:
+              with open("report/eval_report.json") as f:
                   r = json.load(f)
               lines = []
               for metric, score in r["scores"].items():

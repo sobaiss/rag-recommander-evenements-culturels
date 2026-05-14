@@ -119,7 +119,7 @@ def build_openagenda_url(
     )
 
 
-def load_documents_from_file(input_file: str):
+def load_documents_from_file(input_file: str) -> list[Document]:
     """Charge les documents depuis un fichier local (JSON ou CSV)."""
     if input_file.endswith(".json"):
         return _load_from_json_file(input_file)
@@ -129,7 +129,7 @@ def load_documents_from_file(input_file: str):
         return loader.load()
 
 
-def load_documents_from_url(url: str) -> list:
+def load_documents_from_url(url: str) -> list[Document]:
     """
     Charge les documents depuis une URL externe (API).
 
@@ -147,7 +147,7 @@ def load_documents_from_url(url: str) -> list:
         data = response.json()
 
         # Transformer chaque enregistrement en Document
-        documents = []
+        documents: list[Document] = []
         if isinstance(data, list):
             for item in data:
                 doc = create_document_from_record(item)
@@ -174,12 +174,12 @@ def load_documents_from_url(url: str) -> list:
         raise
 
 
-def _load_from_json_file(input_file: str) -> list:
+def _load_from_json_file(input_file: str) -> list[Document]:
     """Charge les documents depuis un fichier JSON local."""
     with open(input_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    documents = []
+    documents: list[Document] = []
     if isinstance(data, list):
         for item in data:
             doc = create_document_from_record(item)
@@ -192,7 +192,9 @@ def _load_from_json_file(input_file: str) -> list:
     return documents
 
 
-def load_documents_from_url_paginated(base_url: str, max_records: int = 120) -> list:
+def load_documents_from_url_paginated(
+    base_url: str, max_records: int = 120
+) -> list[Document]:
     """Charge les documents depuis l'API OpenAgenda avec pagination automatique.
 
     Args:
@@ -202,7 +204,7 @@ def load_documents_from_url_paginated(base_url: str, max_records: int = 120) -> 
     Returns:
         Liste de Documents LangChain.
     """
-    documents: list = []
+    documents: list[Document] = []
     rows_per_page = 1000
     start = 0
     total_hits: int | None = None

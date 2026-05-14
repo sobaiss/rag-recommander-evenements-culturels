@@ -1,6 +1,8 @@
 {
   "embedding_model": "mistral-embed",
-  "created_at": "2026-05-11T05:51:18.899417",
-  "num_documents": 20,
-  "num_chunks": 20
+  "created_at": "2026-05-13T23:42:53.969863",
+  "num_documents": 23,
+  "cities": [
+    "Paris"
+  ]
 }
