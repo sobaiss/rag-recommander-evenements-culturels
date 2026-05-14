@@ -240,6 +240,7 @@ def evaluate(
             from ragas import evaluate as ragas_evaluate
             from ragas.dataset_schema import EvaluationResult
             from ragas.metrics import (
+                AnswerAccuracy,
                 FactualCorrectness,
                 Faithfulness,
                 LLMContextPrecisionWithReference,
@@ -261,6 +262,7 @@ def evaluate(
         FactualCorrectness(),
         LLMContextPrecisionWithReference(),
         LLMContextRecall(),
+        AnswerAccuracy(),
     ]
 
     kwargs = {
@@ -311,7 +313,6 @@ def main() -> None:
         help="Modèle Ollama pour les embeddings",
     )
     args = parser.parse_args()
-
     try:
         pairs = load_dataset(args.dataset)
     except FileNotFoundError:
@@ -325,13 +326,19 @@ def main() -> None:
 
     ragas_dataset = build_ragas_dataset(questions, references, answers, contexts)
 
-    logging.info("Lancement de l'évaluation Ragas...")
-    evaluation_result = evaluate(
-        ragas_dataset, args.evaluator, args.ollama_model, args.ollama_embed
-    )
+    a = True
+    if a:
+        import pandas as pd
 
-    os.makedirs("report", exist_ok=True)
-    evaluation_result.to_json("report/evaluation_result.json")
+        evaluation_result = pd.read_json("report/evaluation_result.json")
+    else:
+        logging.info("Lancement de l'évaluation Ragas...")
+        evaluation_result = evaluate(
+            ragas_dataset, args.evaluator, args.ollama_model, args.ollama_embed
+        )
+
+        os.makedirs("report", exist_ok=True)
+        evaluation_result.to_json("report/evaluation_result.json")
 
     scores = {
         col: float(evaluation_result[col].mean())

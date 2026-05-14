@@ -44,7 +44,7 @@ eval-build:
 	PYTHONPATH=. uv run scripts/indexer.py --input-file data/eval_events.json --vector-db-dir vector_db_eval
 
 eval:
-	PYTHONPATH=. uv run evaluation/evaluate_rag.py --dataset data/eval_dataset.json --report report/eval_report.json --evaluator=mistral
+	PYTHONPATH=. uv run evaluation/evaluate_rag.py $(if $(dataset),--dataset $(dataset)) $(if $(report),--report $(report)) $(if $(evaluator),--evaluator $(evaluator))
 
 lint:
 	ruff check .

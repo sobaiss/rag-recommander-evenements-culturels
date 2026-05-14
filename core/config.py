@@ -69,6 +69,12 @@ EVAL_METRICS: list[dict] = [
         "description": "Tous les docs pertinents retrouvés ?",
         "threshold": 0.4,
     },
+    {
+        "key": "nv_accuracy",
+        "label": "Précision réponse",
+        "description": "La réponse est-elle correcte par rapport à la référence ?",
+        "threshold": 0.5,
+    },
 ]
 
 THRESHOLDS: dict[str, float] = {m["key"]: m["threshold"] for m in EVAL_METRICS}
