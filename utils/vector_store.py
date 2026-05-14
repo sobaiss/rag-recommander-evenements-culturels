@@ -20,6 +20,7 @@ from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 
 from utils.config import (
     EMBEDDING_MODEL,
+    MISTRAL_API_KEY,
     VECTOR_DB_DIR,
 )
 
@@ -245,11 +246,16 @@ class VectorStoreManager:
                     "Exécutez: uv add sentence-transformers"
                 ) from exc
             return HuggingFaceEmbeddings(model_name=self.embedding_model)
-        return MistralAIEmbeddings(model=self.embedding_model)
+        if not MISTRAL_API_KEY:
+            raise ValueError(
+                "MISTRAL_API_KEY non définie. "
+                "Définissez-la dans le fichier .env ou comme variable d'environnement."
+            )
+        return MistralAIEmbeddings(model=self.embedding_model, api_key=MISTRAL_API_KEY)
 
     def _get_llm(self) -> ChatMistralAI:
         if self._llm is None:
-            self._llm = ChatMistralAI(temperature=0)
+            self._llm = ChatMistralAI(temperature=0, api_key=MISTRAL_API_KEY)
         return self._llm
 
     # ------------------------------------------------------------------
