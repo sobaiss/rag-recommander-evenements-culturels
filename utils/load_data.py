@@ -79,44 +79,44 @@ def create_document_from_record(record: dict) -> Document:
     return Document(page_content=page_content, metadata=metadata)
 
 
+_OPENAGENDA_BASE = (
+    "https://public.opendatasoft.com/api/explore/v2.1/catalog/datasets"
+    "/evenements-publics-openagenda/records"
+)
+
+
 def build_openagenda_url(
     cities: list[str],
     begin_date: "datetime.date | str | None" = None,
-    rows: int = 40,
+    limit: int = 100,
+    offset: int = 0,
 ) -> str:
-    """Construit l'URL OpenAgenda avec les filtres ville et date.
+    """Construit l'URL OpenAgenda v2.1 (/records) avec les filtres ville et date.
 
     Args:
         cities: Liste de villes à filtrer (vide = toute la France).
         begin_date: Date de début sous forme de ``datetime.date`` ou chaîne
             ``YYYY-MM-DD``. Seuls le mois et l'année sont utilisés.
-        rows: Nombre de résultats par page (pagination gérée par
-            ``load_documents_from_url_paginated``).
+        limit: Nombre de résultats par page (pagination via ``offset``).
+        offset: Position de départ (omis de l'URL si égal à 1).
     """
-    params: list[tuple] = [
-        ("rows", rows),
-        ("disjunctive.keywords_fr", "true"),
-        ("disjunctive.location_region", "true"),
-        ("disjunctive.location_countrycode", "true"),
-        ("disjunctive.location_department", "true"),
-        ("disjunctive.location_city", "true"),
-        ("start", 0),
-        ("dataset", "evenements-publics-openagenda"),
-        ("timezone", "Europe/Berlin"),
-        ("lang", "fr"),
-    ]
-    for city in cities:
-        params.append(("refine.location_city", city))
+    date_obj: datetime.date | None = None
     if begin_date:
         date_obj = (
             datetime.date.fromisoformat(begin_date)
             if isinstance(begin_date, str)
             else begin_date
         )
-        params.append(("refine.firstdate_begin", date_obj.strftime("%Y/%m")))
-    return "https://public.opendatasoft.com/api/records/1.0/search/?" + urlencode(
-        params
-    )
+
+    params: list[tuple] = [("limit", limit)]
+    if offset > 0:
+        params.append(("offset", offset))
+    for city in cities:
+        params.append(("refine", f'location_city:"{city}"'))
+    if date_obj:
+        params.append(("refine", f'firstdate_begin:"{date_obj.strftime("%Y/%m")}"'))
+
+    return _OPENAGENDA_BASE + "?" + urlencode(params)
 
 
 def load_documents_from_file(input_file: str) -> list[Document]:
@@ -205,18 +205,19 @@ def load_documents_from_url_paginated(
         Liste de Documents LangChain.
     """
     documents: list[Document] = []
-    rows_per_page = 1000
-    start = 0
-    total_hits: int | None = None
+    limit_per_page = 100
+    offset = 0
+    total_count: int | None = None
 
     parsed = urlparse(base_url)
     base_params = parse_qs(parsed.query, keep_blank_values=True)
 
     while len(documents) < max_records:
-        # Reconstruire l'URL avec start/rows mis à jour
+        # Reconstruire l'URL avec offset/limit mis à jour (API v2.1)
         page_params = {k: (v[0] if len(v) == 1 else v) for k, v in base_params.items()}
-        page_params["start"] = str(start)
-        page_params["rows"] = str(rows_per_page)
+        page_params["limit"] = str(limit_per_page)
+        if offset != 0:
+            page_params["offset"] = str(offset)
         url = urlunparse(parsed._replace(query=urlencode(page_params, doseq=True)))
 
         try:
@@ -224,31 +225,30 @@ def load_documents_from_url_paginated(
             response.raise_for_status()
             data = response.json()
         except requests.RequestException as e:
-            logging.error(f"Erreur lors du chargement (page start={start}): {e}")
+            logging.error(f"Erreur lors du chargement (page offset={offset}): {e}")
             raise
 
-        if total_hits is None:
-            total_hits = data.get("nhits", 0)
-            logging.info(f"Total disponible sur l'API: {total_hits} enregistrements")
+        if total_count is None:
+            total_count = data.get("total_count", 0)
+            logging.info(f"Total disponible sur l'API: {total_count} enregistrements")
 
-        records = data.get("records", [])
+        records = data.get("results", [])
         if not records:
             break
 
         for record in records:
-            fields = record.get("fields", {})
-            doc = create_document_from_record(fields)
+            doc = create_document_from_record(record)
             documents.append(doc)
             if len(documents) >= max_records:
                 break
 
-        start += len(records)
-        if total_hits is not None and start >= total_hits:
+        offset += len(records)
+        if total_count is not None and offset >= total_count:
             break
 
     logging.info(
         f"Chargement terminé: {len(documents)} documents récupérés "
-        f"(sur {total_hits} disponibles)."
+        f"(sur {total_count} disponibles)."
     )
     return documents
 

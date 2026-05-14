@@ -180,9 +180,7 @@ with st.sidebar:
     current_meta = vector_store.get_metadata()
     if current_meta:
         st.caption(f"Modèle : `{current_meta.get('embedding_model', 'N/A')}`")
-        st.caption(
-            f"Chunks : {current_meta.get('num_chunks', 0)} · Docs : {current_meta.get('num_documents', 0)}"
-        )
+        st.caption(f"Docs : {current_meta.get('num_documents', 0)}")
         created = current_meta.get("created_at", "")[:10]
         if created:
             st.caption(f"Créé le : {created}")
@@ -347,6 +345,7 @@ if st.session_state.show_reindex_form:
                         f"- Créé le : {(final_meta.get('created_at') or '')[:19] if final_meta is not None else ''}"
                     )
                     st.session_state.show_reindex_form = False
+                    st.rerun()
 
                 except Exception as exc:
                     reindex_status.update(

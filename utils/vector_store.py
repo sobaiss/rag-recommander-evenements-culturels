@@ -2,7 +2,6 @@ import datetime
 import json
 import logging
 import os
-import re
 from typing import Any, Callable
 
 from langchain_classic.chains.query_constructor.ir import (
@@ -22,20 +21,6 @@ from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
 from utils.config import (
     EMBEDDING_MODEL,
     VECTOR_DB_DIR,
-)
-
-# ---------------------------------------------------------------------------
-# Détection des expressions temporelles (pour injection de contexte date)
-# ---------------------------------------------------------------------------
-
-_TEMPORAL_RE = re.compile(
-    r"\bce\s+mois\b|\baujourd['\s]?hui\b|\bdemain\b|\bce\s+week[\s-]?end\b|\bweekend\b"
-    r"|\bsemaine\s+prochaine\b|\bcette\s+semaine\b|\bmois\s+prochain\b"
-    r"|\bà\s+venir\b|\bprochains?\b|\bprochainement\b|\bfuturs?\b|\ben\s+cours\b|\bencores?\s+actifs?\b"
-    r"|\b(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)"
-    r"\s+\d{4}\b"
-    r"|\b\d{4}\b",
-    re.IGNORECASE,
 )
 
 # ---------------------------------------------------------------------------
@@ -370,22 +355,20 @@ class VectorStoreManager:
                 enable_limit=True,
                 verbose=True,
             )
-            constructor_query = query_text
-            if _TEMPORAL_RE.search(query_text):
-                today = datetime.date.today()
-                first_day = today.replace(day=1)
-                last_day = (today.replace(day=28) + datetime.timedelta(days=4)).replace(
-                    day=1
-                ) - datetime.timedelta(days=1)
-                date_ctx = (
-                    f"[Date du jour: {today.isoformat()}. Règles de filtrage selon l'expression temporelle: "
-                    f"'à venir' / 'prochains' → end_date >= '{today.isoformat()}'; "
-                    f"'aujourd\\'hui' → start_date <= '{today.isoformat()}' ET end_date >= '{today.isoformat()}'; "
-                    f"'ce mois-ci' / 'en cours' → start_date <= '{last_day.isoformat()}' ET end_date >= '{first_day.isoformat()}'; "
-                    f"'mois YYYY' → start_date <= dernier_jour_du_mois ET end_date >= premier_jour_du_mois. "
-                    f"Un événement commencé avant la période peut encore être actif si end_date est dans la période.]"
-                )
-                constructor_query = f"{query_text} {date_ctx}"
+            today = datetime.date.today()
+            first_day = today.replace(day=1)
+            last_day = (today.replace(day=28) + datetime.timedelta(days=4)).replace(
+                day=1
+            ) - datetime.timedelta(days=1)
+            date_ctx = (
+                f"[Date du jour: {today.isoformat()}. Règles de filtrage: "
+                f"'à venir' / 'prochains' / 'futurs' → end_date >= '{today.isoformat()}'; "
+                f"'aujourd\\'hui' → start_date <= '{today.isoformat()}' ET end_date >= '{today.isoformat()}'; "
+                f"'ce mois-ci' / 'en cours' / 'ce mois' → start_date <= '{last_day.isoformat()}' ET end_date >= '{first_day.isoformat()}'; "
+                f"'mois YYYY' → start_date <= dernier_jour_du_mois ET end_date >= premier_jour_du_mois. "
+                f"Ne jamais utiliser une date antérieure à {today.isoformat()} comme référence pour le futur.]"
+            )
+            constructor_query = f"{query_text} {date_ctx}"
             structured_query = retriever.query_constructor.invoke(
                 {"query": constructor_query}
             )
