@@ -20,7 +20,7 @@ from pydantic import SecretStr
 if not hasattr(_mistralai_ns, "Mistral"):
     _mistralai_ns.Mistral = _Mistral
 
-from core.config import MISTRAL_API_KEY
+from core.config import MISTRAL_API_KEY, THRESHOLDS
 
 """
 evaluate_rag.py — Évaluation automatique du pipeline RAG avec Ragas.
@@ -54,13 +54,6 @@ import time
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
-THRESHOLDS = {
-    "faithfulness": 0.5,
-    "factual_correctness(mode=f1)": 0.5,
-    "llm_context_precision_with_reference": 0.4,
-    "context_recall": 0.4,
-}
 
 EVAL_VECTOR_DB_DIR = "vector_db_eval"
 

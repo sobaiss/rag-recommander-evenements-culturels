@@ -1,8 +1,10 @@
 # app.py
 import datetime
+import json
 import logging
 import os
 
+import plotly.graph_objects as go
 import streamlit as st
 from mistralai.client import Mistral
 from streamlit_feedback import streamlit_feedback  # Importez le composant
@@ -17,9 +19,10 @@ from core.config import (
     FAISS_INDEX_FILE,
     FRENCH_CITIES,
     INDEX_METADATA_FILE,
+    METRIC_DESCRIPTIONS,
+    METRIC_LABELS,
 )
 from core.container import AppContainer, build_container
-from db.database import log_interaction, update_feedback  # Importez update_feedback
 from core.load_data import (
     build_openagenda_url,
     load_documents_from_url_paginated,
@@ -28,6 +31,9 @@ from core.load_data import (
 from core.query_classifier import QueryClassifier
 from core.rag_pipeline import RAGPipeline
 from core.vector_store import VectorStoreManager
+from db.database import log_interaction, update_feedback  # Importez update_feedback
+
+EVAL_REPORT_PATH = "report/eval_report.json"
 
 
 class StreamlitLogHandler(logging.Handler):
@@ -82,6 +88,9 @@ if "last_interaction_id" not in st.session_state:
 # Contrôle l'affichage du formulaire de réindexation
 if "show_reindex_form" not in st.session_state:
     st.session_state.show_reindex_form = False
+# Contrôle l'affichage du rapport d'évaluation
+if "show_eval_report" not in st.session_state:
+    st.session_state.show_eval_report = False
 
 # --- Interface Utilisateur ---
 
@@ -135,15 +144,6 @@ with st.sidebar:
     # Convertir le pourcentage en valeur décimale (0-1)
     min_score = min_score_percent / 100.0
 
-    st.divider()
-
-    # Informations sur l'application
-    st.subheader("📝 Informations")
-    st.markdown(f"**Modèle sélectionné**: {model_options[selected_model]}")
-    st.markdown(
-        f"**Documents indexés**: {vector_store.index.ntotal if vector_store.index else 0}"
-    )
-
     # Informations sur la conversation actuelle
     if st.session_state.messages:
         st.info(
@@ -194,6 +194,24 @@ with st.sidebar:
     )
     if st.button(reindex_label, use_container_width=True):
         st.session_state.show_reindex_form = not st.session_state.show_reindex_form
+        st.rerun()
+
+    st.divider()
+
+    # --- Section rapport d'évaluation ---
+    st.subheader("🧪 Évaluation RAG")
+    report_exists = os.path.exists(EVAL_REPORT_PATH)
+    if report_exists:
+        st.caption("Rapport disponible.")
+    else:
+        st.caption("Aucun rapport. Lancez `make eval`.")
+    eval_label = (
+        "🔼 Masquer l'évaluation"
+        if st.session_state.show_eval_report
+        else "📊 Voir le rapport"
+    )
+    if st.button(eval_label, use_container_width=True, disabled=not report_exists):
+        st.session_state.show_eval_report = not st.session_state.show_eval_report
         st.rerun()
 
 # --- Formulaire de réindexation (zone principale) ---
@@ -359,6 +377,116 @@ if st.session_state.show_reindex_form:
                     if _log_handler.records:
                         with st.expander("📋 Logs détaillés", expanded=False):
                             st.code("\n".join(_log_handler.records), language="text")
+
+    st.divider()
+
+# --- Rapport d'évaluation RAG ---
+if st.session_state.show_eval_report:
+    st.header("📊 Rapport d'évaluation RAG")
+
+    if not os.path.exists(EVAL_REPORT_PATH):
+        st.warning("Aucun rapport trouvé. Lancez d'abord `make eval`.")
+    else:
+        with open(EVAL_REPORT_PATH, encoding="utf-8") as _f:
+            _report = json.load(_f)
+
+        _scores = _report.get("scores", {})
+        _thresholds = _report.get("thresholds", {})
+        _passed = _report.get("passed", {})
+        _all_passed = _report.get("all_passed", False)
+        _evaluator = _report.get("evaluator", "N/A").title()
+
+        # --- Bannière statut global ---
+        if _all_passed:
+            st.success(
+                f"✅ **Tous les seuils sont atteints**  ·  Évaluateur : **{_evaluator}**"
+            )
+        else:
+            st.error(
+                f"❌ **Certains seuils ne sont pas atteints**  ·  Évaluateur : **{_evaluator}**"
+            )
+
+        # --- Cartes métriques ---
+        _metric_cols = st.columns(len(_scores))
+        for _col, (_key, _score) in zip(_metric_cols, _scores.items()):
+            _thr = _thresholds.get(_key, 0)
+            _ok = _passed.get(_key, False)
+            _label = METRIC_LABELS.get(_key, _key)
+            _desc = METRIC_DESCRIPTIONS.get(_key, "")
+            with _col:
+                st.metric(
+                    label=f"{'✅' if _ok else '❌'} {_label}",
+                    value=f"{_score:.1%}",
+                    delta=f"seuil : {_thr:.0%}",
+                    delta_color="normal" if _ok else "inverse",
+                    help=_desc,
+                )
+                st.progress(_score)
+
+        st.write("")
+
+        # --- Radar chart scores vs seuils ---
+        _keys = list(_scores.keys())
+        _labels = [METRIC_LABELS.get(k, k) for k in _keys]
+        _sv = [_scores[k] for k in _keys]
+        _tv = [_thresholds.get(k, 0) for k in _keys]
+
+        _fig = go.Figure()
+        _fig.add_trace(
+            go.Scatterpolar(
+                r=_sv + [_sv[0]],
+                theta=_labels + [_labels[0]],
+                fill="toself",
+                name="Score obtenu",
+                line=dict(color="#00CC96", width=2),
+                fillcolor="rgba(0,204,150,0.15)",
+            )
+        )
+        _fig.add_trace(
+            go.Scatterpolar(
+                r=_tv + [_tv[0]],
+                theta=_labels + [_labels[0]],
+                fill="toself",
+                name="Seuil minimum",
+                line=dict(color="#EF553B", dash="dash", width=2),
+                fillcolor="rgba(239,85,59,0.08)",
+            )
+        )
+        _fig.update_layout(
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    range=[0, 1],
+                    tickformat=".0%",
+                    gridcolor="rgba(128,128,128,0.2)",
+                )
+            ),
+            showlegend=True,
+            height=380,
+            margin=dict(l=60, r=60, t=40, b=40),
+            paper_bgcolor="rgba(0,0,0,0)",
+            legend=dict(
+                orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5
+            ),
+        )
+        st.plotly_chart(_fig, use_container_width=True)
+
+        # --- Paires Q&R ---
+        _qa_pairs = _report.get("qa_pairs", [])
+        if _qa_pairs:
+            st.subheader(f"📋 Paires question / réponse évaluées ({len(_qa_pairs)})")
+            for _i, _pair in enumerate(_qa_pairs, 1):
+                _q_short = _pair["question"][:90] + (
+                    "…" if len(_pair["question"]) > 90 else ""
+                )
+                with st.expander(f"Q{_i} — {_q_short}"):
+                    _c1, _c2 = st.columns(2)
+                    with _c1:
+                        st.markdown("**🤖 Réponse générée**")
+                        st.markdown(_pair.get("answer", ""))
+                    with _c2:
+                        st.markdown("**✅ Vérité terrain**")
+                        st.markdown(_pair.get("ground_truth", ""))
 
     st.divider()
 

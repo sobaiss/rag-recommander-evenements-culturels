@@ -41,6 +41,40 @@ DATABASE_URL = f"sqlite:///{DATABASE_FILE}"  # URL pour SQLAlchemy
 APP_TITLE = "Assistant recommandation des événements culturels"
 COMPANY_NAME = "Puls-Events"  # Nom à personnaliser dans l'interface
 
+# --- Métriques d'évaluation RAG ---
+# Source unique pour les clés, seuils, labels et descriptions.
+# Modifier ici pour répercuter les changements dans l'UI et dans evaluate_rag.py.
+EVAL_METRICS: list[dict] = [
+    {
+        "key": "faithfulness",
+        "label": "Fidélité",
+        "description": "Réponses ancrées dans les sources ?",
+        "threshold": 0.5,
+    },
+    {
+        "key": "factual_correctness(mode=f1)",
+        "label": "Exactitude factuelle",
+        "description": "Faits factuellement corrects ?",
+        "threshold": 0.5,
+    },
+    {
+        "key": "llm_context_precision_with_reference",
+        "label": "Précision contexte",
+        "description": "Documents récupérés pertinents ?",
+        "threshold": 0.4,
+    },
+    {
+        "key": "context_recall",
+        "label": "Rappel contexte",
+        "description": "Tous les docs pertinents retrouvés ?",
+        "threshold": 0.4,
+    },
+]
+
+THRESHOLDS: dict[str, float] = {m["key"]: m["threshold"] for m in EVAL_METRICS}
+METRIC_LABELS: dict[str, str] = {m["key"]: m["label"] for m in EVAL_METRICS}
+METRIC_DESCRIPTIONS: dict[str, str] = {m["key"]: m["description"] for m in EVAL_METRICS}
+
 
 # --- Régions françaises disponibles pour le filtre OpenAgenda ---
 FRENCH_CITIES = [
