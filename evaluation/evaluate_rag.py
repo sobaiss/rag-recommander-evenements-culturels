@@ -326,24 +326,21 @@ def main() -> None:
 
     ragas_dataset = build_ragas_dataset(questions, references, answers, contexts)
 
-    a = True
-    if a:
-        import pandas as pd
+    logging.info("Lancement de l'évaluation Ragas...")
+    evaluation_result = evaluate(
+        ragas_dataset, args.evaluator, args.ollama_model, args.ollama_embed
+    )
 
-        evaluation_result = pd.read_json("report/evaluation_result.json")
-    else:
-        logging.info("Lancement de l'évaluation Ragas...")
-        evaluation_result = evaluate(
-            ragas_dataset, args.evaluator, args.ollama_model, args.ollama_embed
-        )
+    os.makedirs("report", exist_ok=True)
+    evaluation_result.to_json("report/evaluation_result.json")
 
-        os.makedirs("report", exist_ok=True)
-        evaluation_result.to_json("report/evaluation_result.json")
+    import math
 
     scores = {
-        col: float(evaluation_result[col].mean())
+        col: float(mean_val)
         for col in THRESHOLDS
         if col in evaluation_result.columns
+        and not math.isnan(mean_val := float(evaluation_result[col].mean()))
     }
 
     passed = {metric: score >= THRESHOLDS[metric] for metric, score in scores.items()}

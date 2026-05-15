@@ -49,31 +49,31 @@ EVAL_METRICS: list[dict] = [
         "key": "faithfulness",
         "label": "Fidélité",
         "description": "Réponses ancrées dans les sources ?",
-        "threshold": 0.5,
+        "threshold": 0.8,
     },
     {
         "key": "factual_correctness(mode=f1)",
         "label": "Exactitude factuelle",
         "description": "Faits factuellement corrects ?",
-        "threshold": 0.5,
+        "threshold": 0.6,
     },
     {
         "key": "llm_context_precision_with_reference",
         "label": "Précision contexte",
         "description": "Documents récupérés pertinents ?",
-        "threshold": 0.4,
+        "threshold": 0.8,
     },
     {
         "key": "context_recall",
         "label": "Rappel contexte",
         "description": "Tous les docs pertinents retrouvés ?",
-        "threshold": 0.4,
+        "threshold": 0.8,
     },
     {
         "key": "nv_accuracy",
         "label": "Précision réponse",
         "description": "La réponse est-elle correcte par rapport à la référence ?",
-        "threshold": 0.5,
+        "threshold": 0.7,
     },
 ]
 
