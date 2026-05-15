@@ -16,4 +16,5 @@ wheels/
 data/openagenda*
 database
 vector_db
+vector_db_ollama
 report/

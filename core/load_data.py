@@ -100,21 +100,18 @@ def build_openagenda_url(
         limit: Nombre de résultats par page (pagination via ``offset``).
         offset: Position de départ (omis de l'URL si égal à 1).
     """
-    date_obj: datetime.date | None = None
-    if begin_date:
-        date_obj = (
-            datetime.date.fromisoformat(begin_date)
-            if isinstance(begin_date, str)
-            else begin_date
-        )
-
     params: list[tuple] = [("limit", limit)]
     if offset > 0:
         params.append(("offset", offset))
     for city in cities:
         params.append(("refine", f'location_city:"{city}"'))
-    if date_obj:
-        params.append(("refine", f'firstdate_begin:"{date_obj.strftime("%Y/%m")}"'))
+    if begin_date:
+        if isinstance(begin_date, datetime.date):
+            refine_date = begin_date.strftime("%Y/%m")
+        else:
+            parts = begin_date.split("-")
+            refine_date = parts[0] if len(parts) == 1 else f"{parts[0]}/{parts[1]}"
+        params.append(("refine", f'firstdate_begin:"{refine_date}"'))
 
     return _OPENAGENDA_BASE + "?" + urlencode(params)
 

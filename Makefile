@@ -25,7 +25,7 @@ help:
 	@echo "  make reset       - Reset the application state (asks for confirmation)"
 
 index:
-	PYTHONPATH=. uv run scripts/indexer.py $(if $(input-file),--input-file $(input-file)) $(if $(data-url),--data-url $(data-url)) $(if $(vector-db-dir),--vector-db-dir $(vector-db-dir))
+	PYTHONPATH=. uv run scripts/indexer.py $(if $(input-file),--input-file $(input-file)) $(if $(data-url),--data-url $(data-url)) $(if $(vector-db-dir),--vector-db-dir $(vector-db-dir)) $(if $(locations),--locations $(locations)) $(if $(begin-date),--begin-date $(begin-date))
 # 	make index data-url="https://public.opendatasoft.com/api/records/1.0/search/?rows=40&disjunctive.keywords_fr=true&disjunctive.location_region=true&disjunctive.location_countrycode=true&disjunctive.location_department=true&disjunctive.location_city=true&refine.location_region=%C3%8Ele-de-France&refine.firstdate_begin=2025%2F04&start=0&dataset=evenements-publics-openagenda&timezone=Europe%2FBerlin&lang=fr"
 
 chat:
