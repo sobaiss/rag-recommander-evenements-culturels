@@ -8,7 +8,7 @@ if not MISTRAL_API_KEY:
 
 INPUT_DIR = "data"  # Dossier pour les données sources après extraction
 
-VECTOR_DB_DIR = "vector_db"  # Dossier pour stocker l'index Faiss et les chunks
+VECTOR_DB_DIR = os.getenv("VECTOR_DB_DIR", "vector_db")
 FAISS_INDEX_FILE = os.path.join(VECTOR_DB_DIR, "faiss_index.idx")
 DOCUMENT_CHUNKS_FILE = os.path.join(VECTOR_DB_DIR, "document_chunks.pkl")
 INDEX_METADATA_FILE = os.path.join(VECTOR_DB_DIR, "index_metadata.json")
@@ -16,7 +16,8 @@ INDEX_METADATA_FILE = os.path.join(VECTOR_DB_DIR, "index_metadata.json")
 EMBEDDING_BATCH_SIZE = 32  # Taille des lots pour l'API d'embedding
 
 # --- Modèles Mistral ---
-EMBEDDING_MODEL = "mistral-embed"
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "mistral-embed")
+EMBEDDING_MODEL_OLLAMA = "ollama:bge-m3"
 CHAT_MODEL = "mistral-large-latest"  # Ou un autre modèle comme mistral-large-latest
 
 MODEL_NAME = "mistral-large-latest"  # Ou un autre modèle comme mistral-large-latest
@@ -27,6 +28,9 @@ AVAILABLE_EMBEDDING_MODELS = {
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2": "MiniLM Multilingue · local · ~117 MB",
     "sentence-transformers/paraphrase-multilingual-mpnet-base-v2": "MPNet Multilingue · local · ~438 MB",
     "BAAI/bge-m3": "BGE-M3 Multilingue · local · ~2.2 GB",
+    "ollama:nomic-embed-text": "Nomic Embed Text · Ollama · 2048 tokens",
+    "ollama:bge-m3": "BGE-M3 Multilingue · Ollama · 8192 tokens · ~1.2 GB",
+    "ollama:snowflake-arctic-embed2": "Snowflake Arctic Embed 2 · Ollama · 8192 tokens · ~670 MB",
 }
 
 # --- Configuration de la Recherche ---

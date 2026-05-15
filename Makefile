@@ -1,4 +1,4 @@
-.PHONY: help index lint lint-fix run api test eval eval-build clean install reset
+.PHONY: help index lint lint-fix run api test eval eval-build clean install reset chat-ollama
 
 # Load environment variables from .env file
 ifneq (,$(wildcard .env))
@@ -28,8 +28,14 @@ index:
 	PYTHONPATH=. uv run scripts/indexer.py $(if $(input-file),--input-file $(input-file)) $(if $(data-url),--data-url $(data-url)) $(if $(vector-db-dir),--vector-db-dir $(vector-db-dir)) $(if $(locations),--locations $(locations)) $(if $(begin-date),--begin-date $(begin-date))
 # 	make index data-url="https://public.opendatasoft.com/api/records/1.0/search/?rows=40&disjunctive.keywords_fr=true&disjunctive.location_region=true&disjunctive.location_countrycode=true&disjunctive.location_department=true&disjunctive.location_city=true&refine.location_region=%C3%8Ele-de-France&refine.firstdate_begin=2025%2F04&start=0&dataset=evenements-publics-openagenda&timezone=Europe%2FBerlin&lang=fr"
 
+index-ollama:
+	PYTHONPATH=. uv run scripts/indexer.py --vector-db-dir vector_db_ollama --embedding-model ollama:mistral-nemo $(if $(input-file),--input-file $(input-file)) $(if $(data-url),--data-url $(data-url)) $(if $(locations),--locations $(locations)) $(if $(begin-date),--begin-date $(begin-date))
+
 chat:
 	PYTHONPATH=. uv run streamlit run app/Chat.py
+
+chat-ollama:
+	PYTHONPATH=. VECTOR_DB_DIR="vector_db_ollama" EMBEDDING_MODEL="ollama:mistral-nemo" uv run streamlit run app/Chat.py
 
 feedback:
 	PYTHONPATH=. uv run streamlit run app/FeedbackViewer.py

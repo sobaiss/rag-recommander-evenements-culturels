@@ -66,8 +66,9 @@ st.set_page_config(page_title=APP_TITLE, page_icon="📚", layout="wide")
 def get_app_container() -> AppContainer:
     container = build_container()
     if container.mistral_client is None:
-        st.error("Erreur: La clé API Mistral (MISTRAL_API_KEY) n'est pas configurée.")
-        st.stop()
+        st.warning(
+            "⚠️ MISTRAL_API_KEY non définie. Seuls les modèles Ollama sont disponibles."
+        )
     return container
 
 
@@ -111,10 +112,14 @@ with st.sidebar:
     # Paramètres de l'application
     st.subheader("⚙️ Paramètres")
 
-    # Sélecteur de modèle Mistral
+    # Sélecteur de modèle LLM
     model_options = {
-        "mistral-small-latest": "Mistral Small (rapide)",
-        "mistral-large-latest": "Mistral Large (précis)",
+        "mistral-small-latest": "Mistral Small (rapide) · API",
+        "mistral-large-latest": "Mistral Large (précis) · API",
+        "ollama:mistral-medium-3.5": "Mistral Medium 3.5 · Ollama · local",
+        "ollama:qwen3.5": "Qwen 3.5 · Ollama · local",
+        "ollama:gemma4": "Gemma 4 · Ollama · local",
+        "ollama:mistral-nemo": "Mistral Nemo · Ollama · local",
     }
     selected_model = st.selectbox(
         "Modèle LLM",

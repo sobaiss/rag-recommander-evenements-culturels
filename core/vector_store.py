@@ -17,6 +17,7 @@ from langchain_classic.retrievers.self_query.base import SelfQueryRetriever
 from langchain_community.vectorstores import FAISS as LangchainFAISS
 from langchain_core.documents import Document
 from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 from pydantic import SecretStr
 
 from core.config import (
@@ -75,6 +76,46 @@ METADATA_FIELD_INFO = [
         description="Mots-clés et thématiques de l'événement (ex: jazz, nature, patrimoine, danse)",
         type="string",
     ),
+]
+
+
+# Exemples few-shot pour guider les LLM (notamment Ollama) vers la syntaxe
+# fonctionnelle LangChain : lte(), gte(), eq(), and()... au lieu de SQL (<= , >=).
+QUERY_CONSTRUCTOR_EXAMPLES = [
+    {
+        "i": 1,
+        "data_source": "Événements culturels",
+        "user_query": "concerts à Paris en mai 2026",
+        "structured_request": (
+            '{"query": "concerts", "filter": "and(eq(\\"city\\", \\"Paris\\"),'
+            ' lte(\\"start_date\\", \\"2026-05-31\\"), gte(\\"end_date\\", \\"2026-05-01\\"))"}'
+        ),
+    },
+    {
+        "i": 2,
+        "data_source": "Événements culturels",
+        "user_query": "expositions gratuites à Lyon",
+        "structured_request": (
+            '{"query": "expositions", "filter": "and(eq(\\"city\\", \\"Lyon\\"), eq(\\"is_free\\", true))"}'
+        ),
+    },
+    {
+        "i": 3,
+        "data_source": "Événements culturels",
+        "user_query": "festivals de jazz à venir après le 15 mai 2026",
+        "structured_request": (
+            '{"query": "festivals jazz", "filter": "gte(\\"end_date\\", \\"2026-05-15\\")"}'
+        ),
+    },
+    {
+        "i": 4,
+        "data_source": "Événements culturels",
+        "user_query": "spectacles gratuits à Toulouse ou Bordeaux",
+        "structured_request": (
+            '{"query": "spectacles", "filter": "and(eq(\\"is_free\\", true),'
+            ' or(eq(\\"city\\", \\"Toulouse\\"), eq(\\"city\\", \\"Bordeaux\\")))"}'
+        ),
+    },
 ]
 
 
@@ -197,7 +238,7 @@ class VectorStoreManager:
         )
 
         self._faiss_store: LangchainFAISS | None = None
-        self._llm: ChatMistralAI | None = None
+        self._llm: ChatMistralAI | ChatOllama | None = None
 
         self._load_index_and_chunks()
 
@@ -234,10 +275,19 @@ class VectorStoreManager:
     # Embedding / LLM helpers
     # ------------------------------------------------------------------
 
+    def _is_ollama_model(self) -> bool:
+        return self.embedding_model.startswith("ollama:")
+
     def _is_hf_model(self) -> bool:
-        return not self.embedding_model.startswith("mistral")
+        return (
+            not self.embedding_model.startswith("mistral")
+            and not self._is_ollama_model()
+        )
 
     def _get_langchain_embeddings(self):
+        if self._is_ollama_model():
+            model_name = self.embedding_model.split(":", 1)[1]
+            return OllamaEmbeddings(model=model_name)
         if self._is_hf_model():
             try:
                 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -256,14 +306,20 @@ class VectorStoreManager:
             model=self.embedding_model, api_key=SecretStr(MISTRAL_API_KEY)
         )
 
-    def _get_llm(self) -> ChatMistralAI:
+    def _get_llm(self) -> ChatMistralAI | ChatOllama:
         if self._llm is None:
-            if not MISTRAL_API_KEY:
-                raise ValueError(
-                    "MISTRAL_API_KEY non définie. "
-                    "Définissez-la dans le fichier .env ou comme variable d'environnement."
+            if self._is_ollama_model():
+                model_name = self.embedding_model.split(":", 1)[1]
+                self._llm = ChatOllama(model=model_name, temperature=0)
+            else:
+                if not MISTRAL_API_KEY:
+                    raise ValueError(
+                        "MISTRAL_API_KEY non définie. "
+                        "Définissez-la dans le fichier .env ou comme variable d'environnement."
+                    )
+                self._llm = ChatMistralAI(
+                    temperature=0, api_key=SecretStr(MISTRAL_API_KEY)
                 )
-            self._llm = ChatMistralAI(temperature=0, api_key=SecretStr(MISTRAL_API_KEY))
         return self._llm
 
     # ------------------------------------------------------------------
@@ -360,6 +416,9 @@ class VectorStoreManager:
 
         # --- Parsing structuré via SelfQueryRetriever ---
         try:
+            logging.info(
+                f"SelfQueryRetriever — Extracting filters using model {self.embedding_model}..."
+            )
             retriever = SelfQueryRetriever.from_llm(
                 llm=self._get_llm(),
                 vectorstore=self._faiss_store,
@@ -368,6 +427,7 @@ class VectorStoreManager:
                 structured_query_translator=FaissCallableTranslator(),
                 enable_limit=True,
                 verbose=True,
+                # chain_kwargs={"examples": QUERY_CONSTRUCTOR_EXAMPLES},
             )
             today = datetime.date.today()
             first_day = today.replace(day=1)
@@ -386,10 +446,13 @@ class VectorStoreManager:
             structured_query = retriever.query_constructor.invoke(
                 {"query": constructor_query}
             )
+            logging.info(f"SelfQueryRetriever — Structured query: {structured_query}")
             semantic_query, search_kwargs = retriever._prepare_query(
                 query_text, structured_query
             )
-            logging.debug(f"semantic query: {semantic_query}")
+            logging.info(
+                f"SelfQueryRetriever — Semantic query: {semantic_query!r} | Search kwargs: {search_kwargs}"
+            )
 
             if not semantic_query or not semantic_query.strip():
                 meta = self._read_metadata()
