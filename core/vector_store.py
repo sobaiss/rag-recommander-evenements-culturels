@@ -17,6 +17,7 @@ from langchain_classic.retrievers.self_query.base import SelfQueryRetriever
 from langchain_community.vectorstores import FAISS as LangchainFAISS
 from langchain_core.documents import Document
 from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
+from pydantic import SecretStr
 
 from core.config import (
     EMBEDDING_MODEL,
@@ -251,11 +252,18 @@ class VectorStoreManager:
                 "MISTRAL_API_KEY non définie. "
                 "Définissez-la dans le fichier .env ou comme variable d'environnement."
             )
-        return MistralAIEmbeddings(model=self.embedding_model, api_key=MISTRAL_API_KEY)
+        return MistralAIEmbeddings(
+            model=self.embedding_model, api_key=SecretStr(MISTRAL_API_KEY)
+        )
 
     def _get_llm(self) -> ChatMistralAI:
         if self._llm is None:
-            self._llm = ChatMistralAI(temperature=0, api_key=MISTRAL_API_KEY)
+            if not MISTRAL_API_KEY:
+                raise ValueError(
+                    "MISTRAL_API_KEY non définie. "
+                    "Définissez-la dans le fichier .env ou comme variable d'environnement."
+                )
+            self._llm = ChatMistralAI(temperature=0, api_key=SecretStr(MISTRAL_API_KEY))
         return self._llm
 
     # ------------------------------------------------------------------
