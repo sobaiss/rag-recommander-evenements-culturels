@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 
 from mistralai.client import Mistral
 
-from core.prompts import rag_json_system_prompt, rag_no_results_system_prompt, rag_system_prompt
+from core.prompts import (
+    rag_json_system_prompt,
+    rag_no_results_system_prompt,
+    rag_system_prompt,
+)
 from core.query_classifier import QueryClassifier
 from core.vector_store import VectorStoreManager
 
@@ -46,7 +50,7 @@ class RAGPipeline:
         k: int = 5,
         min_score: float = 0.5,
         model: str = "mistral-large-latest",
-        temperature: float = 0.1,
+        temperature: float = 0.5,
         as_json: bool = False,
     ) -> RAGResult:
         now = datetime.datetime.now()

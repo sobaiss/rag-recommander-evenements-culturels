@@ -43,6 +43,9 @@ test:
 eval-build:
 	PYTHONPATH=. uv run scripts/indexer.py --input-file data/eval_events.json --vector-db-dir vector_db_eval
 
+generate-testset:
+	PYTHONPATH=. uv run evaluation/testset_generator.py.py
+
 eval:
 	PYTHONPATH=. uv run evaluation/evaluate_rag.py $(if $(dataset),--dataset $(dataset)) $(if $(report),--report $(report)) $(if $(evaluator),--evaluator $(evaluator))
 

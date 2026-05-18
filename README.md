@@ -232,7 +232,7 @@ Un workflow **GitHub Actions** (`.github/workflows/evaluate_rag.yml`) relance au
 │   └── database.py          # ORM SQLAlchemy / SQLite
 ├── evaluation/
 │   ├── evaluate_rag.py      # Évaluation Ragas (6 métriques)
-│   └── test_generator.py    # Génération du dataset d'évaluation
+│   └── testset_generator.py # Génération du dataset d'évaluation
 ├── scripts/
 │   ├── indexer.py           # Script d'indexation
 │   └── reset.py             # Script de remise à zéro

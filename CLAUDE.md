@@ -44,7 +44,7 @@ All `make` commands that invoke Python set `PYTHONPATH=.` inline so packages res
 ├── scripts/          # CLI scripts (scripts/indexer.py, scripts/reset.py)
 ├── core/             # Business logic (config, vector_store, rag_pipeline, …)
 ├── db/               # Persistence layer (db/database.py — SQLAlchemy/SQLite)
-└── evaluation/       # Ragas evaluation (evaluate_rag.py, test_generator.py)
+└── evaluation/       # Ragas evaluation (evaluate_rag.py, testset_generator.py)
 ```
 
 ### Data Flow
