@@ -87,11 +87,14 @@ MISTRAL_API_KEY=<votre_clé>
 ### 1. Indexer les données
 
 ```bash
+# Depuis l'API OpenAgenda avec des paramètres date de debut et ville(s)
+make index begin-date="2025-05" locations="Paris"
+
+# Depuis l'API OpenAgenda avec des paramètres url
+make index data-url="<url_openagenda>"
+
 # Depuis un fichier JSON local
 make index input-file=data/evenements-publics-openagenda.json
-
-# Depuis l'API OpenAgenda
-make index data-url="<url_openagenda>"
 ```
 
 ### 2. Lancer les services
