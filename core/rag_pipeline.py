@@ -50,7 +50,7 @@ class RAGPipeline:
         k: int = 5,
         min_score: float = 0.5,
         model: str = "mistral-large-latest",
-        temperature: float = 0.5,
+        temperature: float = 0.1,
         as_json: bool = False,
     ) -> RAGResult:
         now = datetime.datetime.now()

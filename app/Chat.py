@@ -132,6 +132,17 @@ with st.sidebar:
         step=1,
     )
 
+    # Slider pour la température
+    temperature = st.slider(
+        "Température (créativité des réponses)",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.1,
+        step=0.05,
+        format="%.2f",
+        help="0 = réponses déterministes et factuelles · 1 = réponses plus créatives et variées",
+    )
+
     # Slider pour le score minimum (en pourcentage)
     min_score_percent = st.slider(
         "Score minimum (filtrer les résultats faibles)",
@@ -556,6 +567,7 @@ if prompt := st.chat_input("Posez votre question ici..."):
                 k=num_docs,
                 min_score=min_score,
                 model=selected_model,
+                temperature=temperature,
             )
 
             needs_rag = result.mode == "RAG"

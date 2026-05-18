@@ -100,6 +100,12 @@ class AskRequest(BaseModel):
         description="Identifiant du modèle Mistral.",
         examples=["mistral-small-latest", "mistral-large-latest"],
     )
+    temperature: float = Field(
+        0.1,
+        ge=0.0,
+        le=1.0,
+        description="Température de génération (0 = déterministe, 1 = créatif).",
+    )
     format: Literal["text", "json"] = Field(
         "text",
         description=(
@@ -266,6 +272,7 @@ def ask(request: AskRequest) -> AskResponse:
             k=request.k,
             min_score=request.min_score,
             model=request.model,
+            temperature=request.temperature,
             as_json=as_json,
         )
     except Exception as exc:
