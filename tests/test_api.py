@@ -295,20 +295,24 @@ async def test_rebuild_updates_in_memory_vector_store(http_client):
 # Tests POST /rebuild — construction de l'URL OpenAgenda
 # ──────────────────────────────────────────────────────────────────────────────
 async def test_rebuild_url_contains_city_filter(http_client):
+    from urllib.parse import unquote
+
     with patch("api.main.load_documents_from_url_paginated", return_value=[]) as mock_fetch:
         await http_client.post("/rebuild", json={"cities": ["Bordeaux"]})
-        called_url = mock_fetch.call_args[0][0]
+        called_url = unquote(mock_fetch.call_args[0][0])
 
-    assert "refine.location_city=Bordeaux" in called_url
+    assert 'location_city:"Bordeaux"' in called_url
 
 
 async def test_rebuild_url_contains_date_filter_formatted(http_client):
-    """La date YYYY-MM-DD doit être convertie en YYYY%2FMM dans l'URL."""
+    """La date YYYY-MM-DD doit être convertie en YYYY/MM dans l'URL (format OpenAgenda v2.1)."""
+    from urllib.parse import unquote
+
     with patch("api.main.load_documents_from_url_paginated", return_value=[]) as mock_fetch:
         await http_client.post("/rebuild", json={"begin_date": "2026-03-15"})
-        called_url = mock_fetch.call_args[0][0]
+        called_url = unquote(mock_fetch.call_args[0][0])
 
-    assert "refine.firstdate_begin=2026%2F03" in called_url
+    assert 'firstdate_begin:"2026/03"' in called_url
 
 
 async def test_rebuild_url_no_filter_when_no_city(http_client):
